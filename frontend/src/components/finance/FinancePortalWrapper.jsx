@@ -6,6 +6,7 @@ import FulfillmentView from './FulfillmentView';
 import FulfillmentDetail from './FulfillmentDetail';
 import InvoicesView from './InvoicesView';
 import InvoiceDetail from './InvoiceDetail';
+import PaymentsView from './PaymentsView';
 import SubscriptionsView from './SubscriptionsView';
 import WarehousesView from './WarehousesView';
 
@@ -67,6 +68,7 @@ export default function FinancePortalWrapper() {
           path="invoice-detail/:id"
           element={<InvoiceDetailRoute onBack={() => navigate('/finance/invoices')} />}
         />
+        <Route path="payments" element={<PaymentsView onNavigate={handleNavigate} />} />
         <Route path="subscriptions" element={<SubscriptionsView onNavigate={handleNavigate} />} />
         <Route path="warehouses" element={<WarehousesView />} />
         <Route path="*" element={<Navigate to="dashboard" replace />} />

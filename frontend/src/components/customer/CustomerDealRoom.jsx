@@ -19,6 +19,7 @@ import {
   Check,
   X,
   ExternalLink,
+  Receipt,
 } from 'lucide-react';
 
 export default function CustomerDealRoom({ quoteId, onBack, initialNegotiate = false, initialConfirm = false }) {
@@ -575,6 +576,78 @@ export default function CustomerDealRoom({ quoteId, onBack, initialNegotiate = f
           </div>
         </div>
       </div>
+
+      {/* ── Customer Invoices & Settlement Section ──────────────── */}
+      {quote.invoices && quote.invoices.length > 0 && (
+        <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-xs space-y-4">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-800 flex items-center justify-center">
+                <Receipt size={16} />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wide">
+                  Invoices & Settlement Ledger
+                </h3>
+                <p className="text-[11px] text-slate-400">Official tax invoices and payment settlement records</p>
+              </div>
+            </div>
+            <span className="text-xs font-extrabold text-slate-700">
+              {quote.invoices.length} {quote.invoices.length === 1 ? 'Invoice' : 'Invoices'} Issued
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {quote.invoices.map((inv) => (
+              <div key={inv.id} className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="font-mono font-bold text-xs text-slate-900">{inv.invoiceNumber}</span>
+                  <span
+                    className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase ${
+                      inv.status === 'PAID'
+                        ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                        : inv.status === 'PARTIALLY_PAID'
+                        ? 'bg-amber-100 text-amber-800 border border-amber-200'
+                        : 'bg-blue-100 text-blue-800 border border-blue-200'
+                    }`}
+                  >
+                    {inv.status}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2 text-[11px] pt-1 border-t border-slate-200/60">
+                  <div>
+                    <span className="text-slate-400 block">Total</span>
+                    <span className="font-bold text-slate-800">{currency}{inv.totalAmount?.toLocaleString()}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block">Paid</span>
+                    <span className="font-bold text-emerald-700">{currency}{inv.amountPaid?.toLocaleString()}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block">Due</span>
+                    <span className={`font-bold ${inv.amountDue > 0 ? 'text-amber-700' : 'text-slate-400'}`}>
+                      {currency}{inv.amountDue?.toLocaleString()}
+                    </span>
+                  </div>
+                </div>
+
+                {inv.payments && inv.payments.length > 0 && (
+                  <div className="pt-2 border-t border-slate-200/60 text-[10px] space-y-1">
+                    <span className="font-bold text-slate-500 uppercase tracking-wider block">Payments Recorded:</span>
+                    {inv.payments.map((p) => (
+                      <div key={p.id} className="flex items-center justify-between text-slate-600">
+                        <span className="font-mono text-slate-800">{p.transactionReference}</span>
+                        <span className="font-bold text-emerald-700">+{currency}{p.amount?.toLocaleString()}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ── Two-Column Bottom Workspace: Delivery Schedule & Negotiation ── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

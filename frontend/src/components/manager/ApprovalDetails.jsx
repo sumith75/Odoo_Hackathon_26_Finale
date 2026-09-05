@@ -20,6 +20,7 @@ import {
   Send,
   MessageSquare,
   Sparkles,
+  Activity,
 } from 'lucide-react';
 
 export default function ApprovalDetails({ quoteId, onBack, onActionCompleted }) {
@@ -132,7 +133,7 @@ export default function ApprovalDetails({ quoteId, onBack, onActionCompleted }) 
     );
   }
 
-  const { quote, telemetry, auditHistory = [] } = data;
+  const { quote, telemetry, auditHistory = [], dealHealth } = data;
   const isPendingManager =
     quote.status === 'PENDING_APPROVAL' && quote.approvalStatus === 'PENDING_MANAGER';
   const isHighRisk = quote.riskLevel === 'HIGH';
@@ -140,6 +141,36 @@ export default function ApprovalDetails({ quoteId, onBack, onActionCompleted }) 
   const comparison = telemetry?.comparison || {};
   const approvalChain = telemetry?.approvalChain || [];
   const governanceItems = telemetry?.governanceItems || [];
+
+  const getHealthBadge = (status, score) => {
+    switch (status) {
+      case 'HEALTHY':
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-50 text-emerald-800 border border-emerald-200">
+            <CheckCircle2 size={11} className="text-emerald-600" /> HEALTHY ({score}/100)
+          </span>
+        );
+      case 'GOOD':
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-blue-50 text-blue-800 border border-blue-200">
+            <ShieldCheck size={11} className="text-blue-600" /> GOOD ({score}/100)
+          </span>
+        );
+      case 'AT_RISK':
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-amber-50 text-amber-800 border border-amber-200">
+            <AlertTriangle size={11} className="text-amber-600" /> AT RISK ({score}/100)
+          </span>
+        );
+      case 'CRITICAL':
+      default:
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-red-50 text-red-800 border border-red-200">
+            <XCircle size={11} className="text-red-600" /> CRITICAL ({score}/100)
+          </span>
+        );
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -238,6 +269,54 @@ export default function ApprovalDetails({ quoteId, onBack, onActionCompleted }) 
               </div>
             </div>
           </div>
+
+          {/* Deal Health Panel */}
+          {dealHealth && (
+            <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                  <Activity size={15} className="text-green-700" />
+                  Deal Health & Lifecycle Progression Status
+                </h2>
+                {getHealthBadge(dealHealth.status, dealHealth.score)}
+              </div>
+
+              <div className="space-y-3">
+                <div className="p-3 bg-green-50/70 border border-green-200 rounded-lg text-xs">
+                  <span className="font-bold text-green-900 block mb-0.5">💡 Next Recommended Action:</span>
+                  <span className="text-green-800 font-semibold">{dealHealth.recommendedAction}</span>
+                </div>
+
+                {dealHealth.signals && dealHealth.signals.length > 0 && (
+                  <div className="space-y-2">
+                    <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">
+                      Active Lifecycle Signals ({dealHealth.signals.length})
+                    </span>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {dealHealth.signals.map((sig, i) => (
+                        <div
+                          key={i}
+                          className={`p-2.5 rounded-lg border text-xs flex items-start gap-2 ${
+                            sig.severity === 'HIGH'
+                              ? 'bg-red-50/60 border-red-200 text-red-800'
+                              : sig.severity === 'MEDIUM'
+                              ? 'bg-amber-50/60 border-amber-200 text-amber-800'
+                              : 'bg-slate-50 border-slate-200 text-slate-700'
+                          }`}
+                        >
+                          <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+                          <div>
+                            <div className="font-bold text-[11px] uppercase tracking-wider">{sig.type}</div>
+                            <div className="text-[11px] mt-0.5 leading-snug">{sig.message}</div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Section 12: Margin Delta Check (Mandatory Manager Review) */}
           <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs">

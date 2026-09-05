@@ -18,6 +18,7 @@ import { authenticateUser } from '../../middleware/auth.js';
 import { calculateQuotationTotals } from '../../services/pricingEngine.js';
 import { evaluateQuotationRisk } from '../../services/discountRiskService.js';
 import { logAudit } from '../../utils/audit.js';
+import { dispatchNotificationAsync } from '../../services/notificationService.js';
 
 const router = express.Router();
 
@@ -54,6 +55,17 @@ function getCustomerFriendlyStatus(status, approvalStatus, validUntil) {
   if (status === 'REJECTED') return 'DECLINED BY SELLER';
   if (status === 'CANCELLED') return 'CANCELLED';
   return status;
+}
+
+// Helper: Strip potentially malicious script/HTML injection tags from customer user input
+export function sanitizeInputText(str) {
+  if (typeof str !== 'string') return '';
+  return str
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+    .replace(/javascript:/gi, '')
+    .replace(/onload=/gi, '')
+    .replace(/onerror=/gi, '')
+    .trim();
 }
 
 // Helper: Mask sensitive internal data before sending to customer
@@ -145,6 +157,28 @@ function sanitizeQuoteForCustomer(quote) {
     comments: (quote.comments || []).filter((c) => c.visibility !== 'INTERNAL_ONLY'),
     changeRequests: quote.changeRequests || [],
     negotiationProposals: quote.negotiationProposals || [],
+    invoices: (quote.invoices || []).map((inv) => ({
+      id: inv.id,
+      invoiceNumber: inv.invoiceNumber,
+      invoiceType: inv.invoiceType,
+      status: inv.status,
+      issueDate: inv.issueDate,
+      dueDate: inv.dueDate,
+      totalAmount: parseFloat(inv.totalAmount) || 0,
+      amountPaid: parseFloat(inv.amountPaid) || 0,
+      amountDue: parseFloat(inv.amountDue) || 0,
+      currency: inv.currency || quote.tenant?.currency || 'INR',
+      payments: (inv.payments || [])
+        .filter((p) => p.status === 'SUCCEEDED' || p.status === 'SUCCESS' || p.status === 'PARTIALLY_REFUNDED' || p.status === 'REFUNDED')
+        .map((p) => ({
+          id: p.id,
+          amount: parseFloat(p.amount) || 0,
+          paymentMethod: p.paymentMethod,
+          status: p.status,
+          transactionReference: p.transactionReference,
+          paidAt: p.paidAt,
+        })),
+    })),
     timeline: buildCustomerTimeline(quote),
   };
 }
@@ -394,6 +428,11 @@ router.get('/quotes/:id', async (req, res) => {
         comments: { orderBy: { createdAt: 'asc' } },
         changeRequests: { orderBy: { createdAt: 'desc' } },
         negotiationProposals: { orderBy: { createdAt: 'desc' } },
+        invoices: {
+          include: {
+            payments: { orderBy: { paidAt: 'desc' } },
+          },
+        },
       },
     });
 
@@ -541,7 +580,7 @@ router.post(['/quotes/:id/comments', '/quotes/:id/comment'], async (req, res) =>
         authorRole: 'CUSTOMER',
         authorName: req.user.name || 'Customer',
         customerId,
-        message: message.trim(),
+        message: sanitizeInputText(message),
         visibility: 'CUSTOMER_VISIBLE',
       },
     });
@@ -811,7 +850,7 @@ router.post(['/quotes/:id/counter-offer', '/quotes/:id/negotiate'], async (req, 
           currentDiscount,
           proposedDiscount: discountNum,
           proposedTotalAmount: proposedPricing.totalAmount,
-          reason: reason?.trim() || null,
+          reason: reason ? sanitizeInputText(reason) : null,
           status: requiresApproval ? 'CUSTOMER_SUBMITTED' : 'ACCEPTED',
         },
       });
@@ -841,7 +880,7 @@ router.post(['/quotes/:id/counter-offer', '/quotes/:id/negotiate'], async (req, 
             marginPercentageAtDecision: proposedPricing.marginPercentage,
             discountAmountAtDecision: proposedPricing.discountAmount,
             reason: `Customer counter-offer Round #${roundNumber}: Requested ${discountNum}% discount (previous: ${currentDiscount}%).`,
-            comment: reason?.trim() || null,
+            comment: reason ? sanitizeInputText(reason) : null,
           },
         });
       }
@@ -930,6 +969,23 @@ router.post(['/quotes/:id/counter-offer', '/quotes/:id/negotiate'], async (req, 
     console.log(
       `🤝 [CUSTOMER DEAL ROOM] Counter-Offer Submitted: Quote #${quote.quoteNumber} | Round #${roundNumber} | Proposed Discount: ${discountNum}% | Auto-Risk: ${riskEvaluation.riskLevel} | Requires Approval: ${requiresApproval}`
     );
+
+    try {
+      if (quote.salesRepId) {
+        dispatchNotificationAsync({
+          tenantId,
+          recipientUserId: quote.salesRepId,
+          recipientRole: 'SALES_REP',
+          type: 'CUSTOMER_NEGOTIATION_STARTED',
+          title: `Counter-Offer: Quote #${quote.quoteNumber}`,
+          message: `Customer proposed ${discountNum}% discount on Quote #${quote.quoteNumber}. ${requiresApproval ? 'Sent for manager review.' : 'Discount within policy.'}`,
+          entityType: 'QUOTATION',
+          entityId: quote.id,
+        });
+      }
+    } catch (notifErr) {
+      console.error('[COUNTER_OFFER_NOTIF_ERROR]:', notifErr);
+    }
 
     res.status(201).json({
       success: true,
@@ -1073,25 +1129,30 @@ router.post('/quotes/:id/confirm', async (req, res) => {
 
     // Atomic confirmation transaction
     const confirmedQuote = await prisma.$transaction(async (tx) => {
-      // Row-level lock / state check
-      const lockCheck = await tx.quotation.findFirst({
-        where: { id: quote.id, tenantId, status: quote.status, version: quote.version },
+      // Atomic Compare-And-Swap (CAS) update: succeeds ONLY if status and version still match
+      const casResult = await tx.quotation.updateMany({
+        where: {
+          id: quote.id,
+          tenantId,
+          status: quote.status,
+          version: quote.version,
+        },
+        data: {
+          status: 'CUSTOMER_CONFIRMED',
+          confirmedAt: new Date(),
+          version: { increment: 1 },
+        },
       });
 
-      if (!lockCheck) {
+      if (casResult.count === 0) {
         const err = new Error('Quotation has been updated by another transaction.');
         err.statusCode = 409;
         err.code = 'CONCURRENT_UPDATE_CONFLICT';
         throw err;
       }
 
-      const updated = await tx.quotation.update({
+      const updated = await tx.quotation.findUnique({
         where: { id: quote.id },
-        data: {
-          status: 'CUSTOMER_CONFIRMED',
-          confirmedAt: new Date(),
-          version: { increment: 1 },
-        },
         include: {
           customer: true,
           salesRep: { select: { id: true, name: true, email: true } },
@@ -1138,6 +1199,40 @@ router.post('/quotes/:id/confirm', async (req, res) => {
     console.log(
       `🎉 [CUSTOMER DEAL ROOM] Order Confirmed! Quote #${confirmedQuote.quoteNumber} | Amount: ${confirmedQuote.totalAmount} | Customer: ${confirmedQuote.customer?.name}`
     );
+
+    try {
+      if (confirmedQuote.salesRepId) {
+        dispatchNotificationAsync({
+          tenantId,
+          recipientUserId: confirmedQuote.salesRepId,
+          recipientRole: 'SALES_REP',
+          type: 'FULFILLMENT_REQUIRED',
+          title: `Deal Confirmed: Quote #${confirmedQuote.quoteNumber}`,
+          message: `Customer ${confirmedQuote.customer?.name || ''} confirmed order #${confirmedQuote.quoteNumber} (Total: ₹${confirmedQuote.totalAmount}).`,
+          entityType: 'QUOTATION',
+          entityId: confirmedQuote.id,
+        });
+      }
+      // Notify Finance Team
+      const financeUsers = await prisma.user.findMany({
+        where: { tenantId, role: { in: ['FINANCE_OPERATIONS', 'ADMIN'] } },
+        select: { id: true },
+      });
+      for (const fin of financeUsers) {
+        dispatchNotificationAsync({
+          tenantId,
+          recipientUserId: fin.id,
+          recipientRole: 'FINANCE_OPERATIONS',
+          type: 'FULFILLMENT_REQUIRED',
+          title: `New Confirmed Order #${confirmedQuote.quoteNumber}`,
+          message: `Order #${confirmedQuote.quoteNumber} confirmed by ${confirmedQuote.customer?.name || 'customer'}. Ready for inventory allocation & billing.`,
+          entityType: 'QUOTATION',
+          entityId: confirmedQuote.id,
+        });
+      }
+    } catch (notifErr) {
+      console.error('[CONFIRM_NOTIF_ERROR]:', notifErr);
+    }
 
     res.json({
       success: true,

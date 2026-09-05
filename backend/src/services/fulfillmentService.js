@@ -96,7 +96,15 @@ export async function getFulfillmentDossier(tenantId, quotationId) {
 }
 
 export async function processFulfillment(tenantId, quotationId, payload = {}, actorUserId) {
-  const { allocationIds = [], markAllPhysical = true, serviceItemIds = [] } = payload;
+  if (typeof tenantId === 'object' && tenantId !== null) {
+    const opts = tenantId;
+    actorUserId = opts.actorUserId || opts.userId || opts.recordedBy;
+    quotationId = opts.quotationId || opts.quoteId;
+    payload = opts.payload || opts;
+    tenantId = opts.tenantId;
+  }
+
+  const { allocationIds = [], markAllPhysical = true, serviceItemIds = [] } = payload || {};
 
   const quote = await prisma.quotation.findFirst({
     where: { id: quotationId, tenantId },
@@ -117,7 +125,7 @@ export async function processFulfillment(tenantId, quotationId, payload = {}, ac
   return await prisma.$transaction(async (tx) => {
     // 1. Process Physical Warehouse Allocations
     let targetAllocations = quote.warehouseAllocations;
-    if (allocationIds.length > 0) {
+    if (Array.isArray(allocationIds) && allocationIds.length > 0) {
       targetAllocations = targetAllocations.filter((a) => allocationIds.includes(a.id));
     }
 
@@ -272,7 +280,7 @@ export async function processFulfillment(tenantId, quotationId, payload = {}, ac
         : 'Partial fulfillment processed.',
       quotation: updatedQuote,
     };
-  });
+  }, { maxWait: 15000, timeout: 30000 });
 }
 
 export { processFulfillment as fulfillAllocations };

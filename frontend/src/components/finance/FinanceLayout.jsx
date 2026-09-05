@@ -15,12 +15,14 @@ import {
   ShieldCheck,
   ChevronRight,
   TrendingUp,
+  CreditCard,
 } from 'lucide-react';
 
 const FINANCE_NAV_ITEMS = [
   { id: 'dashboard', path: '/finance/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'fulfillment', path: '/finance/fulfillment', label: 'Fulfillment Queue', icon: PackageCheck, hasBadge: true },
   { id: 'invoices', path: '/finance/invoices', label: 'Invoices & Billing', icon: Receipt },
+  { id: 'payments', path: '/finance/payments', label: 'Payments & Settlement', icon: CreditCard },
   { id: 'subscriptions', path: '/finance/subscriptions', label: 'Subscriptions', icon: Repeat },
   { id: 'warehouses', path: '/finance/warehouses', label: 'Warehouses & Stock', icon: Warehouse },
 ];

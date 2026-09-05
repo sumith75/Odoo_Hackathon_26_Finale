@@ -86,12 +86,33 @@ export function calculateHybridBilling(quote) {
 
 async function generateInvoiceNumber(tenantId) {
   const currentYear = new Date().getFullYear();
-  const count = await prisma.invoice.count({ where: { tenantId } });
-  const seq = String(count + 1).padStart(5, '0');
-  return `INV-${currentYear}-${seq}`;
+  const prefix = `INV-${currentYear}-`;
+
+  // Use MAX-based sequence: safe across deletions and re-inserts (unlike count+1)
+  const lastInvoice = await prisma.invoice.findFirst({
+    where: { tenantId, invoiceNumber: { startsWith: prefix } },
+    orderBy: { invoiceNumber: 'desc' },
+    select: { invoiceNumber: true },
+  });
+
+  let nextSeq = 1;
+  if (lastInvoice) {
+    const lastSeqStr = lastInvoice.invoiceNumber.replace(prefix, '');
+    const lastSeq = parseInt(lastSeqStr, 10);
+    if (!isNaN(lastSeq)) nextSeq = lastSeq + 1;
+  }
+
+  return `${prefix}${String(nextSeq).padStart(5, '0')}`;
 }
 
 export async function generateOneTimeInvoice(tenantId, quotationId, actorUserId) {
+  if (typeof tenantId === 'object' && tenantId !== null) {
+    const opts = tenantId;
+    actorUserId = opts.actorUserId || opts.userId || opts.generatedBy;
+    quotationId = opts.quotationId || opts.quoteId;
+    tenantId = opts.tenantId;
+  }
+
   const quote = await prisma.quotation.findFirst({
     where: { id: quotationId, tenantId },
     include: {

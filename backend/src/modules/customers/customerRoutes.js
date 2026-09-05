@@ -2,12 +2,14 @@ import express from 'express';
 import prisma from '../../db/prisma.js';
 import { authenticateUser } from '../../middleware/auth.js';
 import { resolveTenant } from '../../middleware/tenant.js';
+import { requireRole } from '../../middleware/rbac.js';
 import { logAudit } from '../../utils/audit.js';
 
 const router = express.Router();
 
 router.use(authenticateUser);
 router.use(resolveTenant);
+router.use(requireRole('ADMIN', 'SALES_REP', 'SALES_MANAGER', 'FINANCE_OPERATIONS'));
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/customers

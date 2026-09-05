@@ -15,6 +15,7 @@ import prisma from '../db/prisma.js';
 import { logAudit } from '../utils/audit.js';
 import { calculateQuotationTotals } from './pricingEngine.js';
 import { evaluateQuotationRisk } from './discountRiskService.js';
+import { dispatchNotificationAsync } from './notificationService.js';
 
 /**
  * Calculate deep governance telemetry for manager decision support
@@ -561,6 +562,67 @@ export async function executeApprovalAction({
 
     return { updatedQuote, responseMessage };
   });
+
+  // Async notification dispatch
+  try {
+    const { updatedQuote } = result;
+    if (updatedQuote.approvalStatus === 'APPROVED') {
+      // Notify Sales Rep
+      if (updatedQuote.salesRepId) {
+        dispatchNotificationAsync({
+          tenantId,
+          recipientUserId: updatedQuote.salesRepId,
+          recipientRole: 'SALES_REP',
+          type: 'QUOTE_APPROVED',
+          title: `Quotation #${updatedQuote.quoteNumber} Approved`,
+          message: `Manager approved quotation #${updatedQuote.quoteNumber}. Total: ₹${updatedQuote.totalAmount}.`,
+          entityType: 'QUOTATION',
+          entityId: updatedQuote.id,
+        });
+      }
+      // Notify Customer
+      if (updatedQuote.customerId) {
+        dispatchNotificationAsync({
+          tenantId,
+          recipientCustomerId: updatedQuote.customerId,
+          recipientRole: 'CUSTOMER',
+          type: 'QUOTE_APPROVED',
+          title: `Terms Approved: Quote #${updatedQuote.quoteNumber}`,
+          message: `The seller has approved the negotiated terms for quotation #${updatedQuote.quoteNumber}. You may now review and confirm your order.`,
+          entityType: 'QUOTATION',
+          entityId: updatedQuote.id,
+        });
+      }
+    } else if (updatedQuote.approvalStatus === 'REJECTED') {
+      if (updatedQuote.salesRepId) {
+        dispatchNotificationAsync({
+          tenantId,
+          recipientUserId: updatedQuote.salesRepId,
+          recipientRole: 'SALES_REP',
+          type: 'QUOTE_REJECTED',
+          title: `Quotation #${updatedQuote.quoteNumber} Rejected`,
+          message: `Manager rejected quotation #${updatedQuote.quoteNumber}. Reason: ${cleanReason || 'No reason provided.'}`,
+          entityType: 'QUOTATION',
+          entityId: updatedQuote.id,
+        });
+      }
+    } else if (updatedQuote.approvalStatus === 'RETURNED_FOR_REVISION') {
+      if (updatedQuote.salesRepId) {
+        dispatchNotificationAsync({
+          tenantId,
+          recipientUserId: updatedQuote.salesRepId,
+          recipientRole: 'SALES_REP',
+          type: 'QUOTE_RETURNED',
+          title: `Quotation #${updatedQuote.quoteNumber} Returned for Revision`,
+          message: `Manager requested revision for quotation #${updatedQuote.quoteNumber}. Reason: ${cleanReason || 'No reason provided.'}`,
+          entityType: 'QUOTATION',
+          entityId: updatedQuote.id,
+        });
+      }
+    }
+  } catch (err) {
+    console.error('[APPROVAL_NOTIF_ERROR]:', err);
+  }
 
   console.log(
     `⚖️ [APPROVAL] Action '${action}' executed on ${result.updatedQuote.quoteNumber} by User ${userId} -> New Status: ${result.updatedQuote.status} (${result.updatedQuote.approvalStatus})`

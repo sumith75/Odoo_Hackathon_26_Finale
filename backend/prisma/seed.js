@@ -787,9 +787,23 @@ async function main() {
   console.log('  🏭 Warehouses & Inventory seeded: BLR-01 (8 Laptop X), HYD-01 (4 Laptop X) [Total: 12 units]');
 
   // 10. Seed Demo Quotes for Finance & Operations Workflows
+  // Delete existing quotations with quoteNumbers DF360-2026-000021 and DF360-2026-000022 if their ID differs
+  await prisma.quotation.deleteMany({
+    where: {
+      tenantId: org.id,
+      quoteNumber: { in: ['DF360-2026-000021', 'DF360-2026-000022'] },
+      id: { notIn: ['quote-df360-000021', 'quote-df360-000022'] },
+    },
+  });
+
   // Quote 1: DF360-2026-000021 — 10 Laptop X + 1 Installation + 1 Premium Support (Splits: 8 BLR + 2 HYD)
   const demoQuote1 = await prisma.quotation.upsert({
-    where: { id: 'quote-df360-000021' },
+    where: {
+      tenantId_quoteNumber: {
+        tenantId: org.id,
+        quoteNumber: 'DF360-2026-000021',
+      },
+    },
     update: {
       status: 'CUSTOMER_CONFIRMED',
       approvalStatus: 'APPROVED',
@@ -885,7 +899,12 @@ async function main() {
 
   // Quote 2: DF360-2026-000022 — 15 Laptop X (Shortage Rejection Test: 15 requested vs 12 in stock)
   const demoQuote2 = await prisma.quotation.upsert({
-    where: { id: 'quote-df360-000022' },
+    where: {
+      tenantId_quoteNumber: {
+        tenantId: org.id,
+        quoteNumber: 'DF360-2026-000022',
+      },
+    },
     update: {
       status: 'CUSTOMER_CONFIRMED',
       approvalStatus: 'APPROVED',

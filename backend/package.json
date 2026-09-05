@@ -5,11 +5,18 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "test": "node tests/test-flow.js",
+    "test": "node tests/verify-foundation.js",
+    "test:security": "node tests/verify-module12-security-hardening.js",
+    "test:e2e": "node tests/verify-module11-e2e-deal-lifecycle.js",
+    "test:notifications": "node tests/verify-module10-notifications-audit.js",
+    "test:health": "node tests/verify-module9-deal-health-analytics.js",
+    "test:payment": "node tests/verify-module14-payment-billing.js",
+    "test:all": "node tests/verify-foundation.js && node tests/verify-module9-deal-health-analytics.js && node tests/verify-module10-notifications-audit.js && node tests/verify-module11-e2e-deal-lifecycle.js && node tests/verify-module12-security-hardening.js && node tests/verify-module14-payment-billing.js",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",
     "db:seed": "node prisma/seed.js",
+    "seed:demo": "node src/db/seedDemo.js",
     "db:studio": "prisma studio"
   },
   "prisma": {

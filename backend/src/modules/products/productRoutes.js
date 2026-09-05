@@ -9,6 +9,7 @@ const router = express.Router();
 
 router.use(authenticateUser);
 router.use(resolveTenant);
+router.use(requireRole('ADMIN', 'SALES_REP', 'SALES_MANAGER', 'FINANCE_OPERATIONS'));
 
 const requireAdmin = requireRole('ADMIN');
 

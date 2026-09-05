@@ -16,6 +16,12 @@ import prisma from '../db/prisma.js';
 import { logAudit } from '../utils/audit.js';
 
 export async function autoAllocateInventory(tenantId, quotationId, actorUserId) {
+  if (typeof tenantId === 'object' && tenantId !== null) {
+    actorUserId = tenantId.actorUserId || tenantId.userId;
+    quotationId = tenantId.quotationId || tenantId.quoteId;
+    tenantId = tenantId.tenantId;
+  }
+
   // 1. Fetch quotation with items, product details, and customer
   const quote = await prisma.quotation.findFirst({
     where: { id: quotationId, tenantId },
@@ -221,7 +227,12 @@ export async function autoAllocateInventory(tenantId, quotationId, actorUserId) 
       });
 
       if (updatedInv.availableQuantity < 0) {
-        throw new Error(`Inventory safety violation: negative stock detected for warehouse ${plan.warehouseName}`);
+        const err = new Error(
+          `Insufficient inventory: concurrent stock allocation detected for product ${plan.productName} in warehouse ${plan.warehouseName}. Stock was depleted by another order.`
+        );
+        err.statusCode = 409;
+        err.code = 'INSUFFICIENT_INVENTORY';
+        throw err;
       }
 
       const trackingNumber = `TRK-${plan.warehouseCode}-${Math.floor(100000 + Math.random() * 900000)}`;

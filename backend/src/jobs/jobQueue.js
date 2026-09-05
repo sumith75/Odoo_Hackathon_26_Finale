@@ -117,17 +117,29 @@ class JobQueueManager {
   }
 }
 
+import { createNotification } from '../services/notificationService.js';
+
 export const jobQueue = new JobQueueManager();
 
 // Register standard background queues
+jobQueue.registerJobHandler('NOTIFICATION_DISPATCH', async (payload) => {
+  try {
+    await createNotification(payload);
+  } catch (err) {
+    console.error('[JOB_QUEUE] Notification creation failed:', err.message);
+  }
+});
+
 jobQueue.registerJobHandler('CUSTOMER_NOTIFICATION', async (payload) => {
-  // Simulates asynchronous push/email notification dispatch
-  // console.log(`[NOTIFY] Sent notification to ${payload.email || payload.customerId}`);
+  try {
+    await createNotification(payload);
+  } catch (err) {
+    console.error('[JOB_QUEUE] Customer notification creation failed:', err.message);
+  }
 });
 
 jobQueue.registerJobHandler('DOCUMENT_GENERATION', async (payload) => {
   // Simulates background PDF generation for quotations and invoices
-  // console.log(`[DOC_GEN] Generated document for ${payload.quotationId || payload.invoiceId}`);
 });
 
 export default jobQueue;

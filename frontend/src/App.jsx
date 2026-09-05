@@ -20,6 +20,8 @@ import ProductCatalog from './components/admin/ProductCatalog';
 import DiscountRulesView from './components/admin/DiscountRulesView';
 import ApprovalRulesView from './components/admin/ApprovalRulesView';
 import AuditActivityView from './components/admin/AuditActivityView';
+import AdminActivityCenter from './components/admin/AdminActivityCenter';
+import NotificationCenterView from './components/notifications/NotificationCenterView';
 import AdminCustomersView from './components/admin/AdminCustomersView';
 import WarehouseAdminView from './components/admin/WarehouseAdminView';
 
@@ -166,7 +168,8 @@ function AdminPortalWrapper() {
         <Route path="discount-rules" element={<DiscountRulesView />} />
         <Route path="approval-rules" element={<ApprovalRulesView />} />
         <Route path="warehouses" element={<WarehouseAdminView />} />
-        <Route path="audit" element={<AuditActivityView />} />
+        <Route path="activity" element={<AdminActivityCenter />} />
+        <Route path="audit" element={<AdminActivityCenter />} />
         <Route path="*" element={<Navigate to="dashboard" replace />} />
       </Routes>
     </AdminLayout>
@@ -400,6 +403,24 @@ function DealFlowRoutes() {
         element={
           <ProtectedRoute allowedRoles={['FINANCE_OPERATIONS', 'ADMIN']}>
             <FinancePortalWrapper />
+          </ProtectedRoute>
+        }
+      />
+
+      {/* Notifications Center */}
+      <Route
+        path="/notifications"
+        element={
+          <ProtectedRoute>
+            <NotificationCenterView />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/customer/notifications"
+        element={
+          <ProtectedRoute allowedRoles={['CUSTOMER']}>
+            <NotificationCenterView />
           </ProtectedRoute>
         }
       />

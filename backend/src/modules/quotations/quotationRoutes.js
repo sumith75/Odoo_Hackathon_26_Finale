@@ -7,11 +7,14 @@ import { evaluateQuotationRisk } from '../../services/discountRiskService.js';
 import { getQuoteRecommendations } from '../../services/recommendationService.js';
 import { logAudit } from '../../utils/audit.js';
 import { parsePaginationParams, buildPaginationMeta } from '../../utils/pagination.js';
+import { dispatchNotificationAsync } from '../../services/notificationService.js';
+import { requireRole } from '../../middleware/rbac.js';
 
 const router = express.Router();
 
 router.use(authenticateUser);
 router.use(resolveTenant);
+router.use(requireRole('ADMIN', 'SALES_REP', 'SALES_MANAGER', 'FINANCE_OPERATIONS'));
 
 // Helper: Safely generate unique sequential quote number e.g. DF360-2026-000001
 async function generateQuoteNumber(tenantId, offset = 0, tx = prisma) {
@@ -1028,6 +1031,30 @@ router.post('/:id/submit', async (req, res) => {
       `🚀 [CPQ] Quote Submitted: ${submittedQuote.quoteNumber} | Status: ${submittedQuote.status} (${submittedQuote.approvalStatus}) | Risk: ${submittedQuote.riskLevel}`
     );
 
+    // Dispatch async notification if approval required
+    try {
+      if (submittedQuote.status === 'PENDING_APPROVAL') {
+        const managers = await prisma.user.findMany({
+          where: { tenantId: req.tenantId, role: { in: ['SALES_MANAGER', 'ADMIN'] } },
+          select: { id: true },
+        });
+        for (const mgr of managers) {
+          dispatchNotificationAsync({
+            tenantId: req.tenantId,
+            recipientUserId: mgr.id,
+            recipientRole: 'SALES_MANAGER',
+            type: 'APPROVAL_REQUIRED',
+            title: `Approval Required: Quote #${submittedQuote.quoteNumber}`,
+            message: `Quotation #${submittedQuote.quoteNumber} (Total: ₹${submittedQuote.totalAmount}, Risk: ${submittedQuote.riskLevel}) requires approval.`,
+            entityType: 'QUOTATION',
+            entityId: submittedQuote.id,
+          });
+        }
+      }
+    } catch (notifErr) {
+      console.error('[SUBMIT_NOTIF_ERROR]:', notifErr);
+    }
+
     res.json({
       success: true,
       message: responseMessage,
@@ -1116,6 +1143,21 @@ async function handleSendToCustomer(req, res) {
     });
 
     console.log(`📤 [CPQ] Quote Sent To Customer: ${updated.quoteNumber} -> Customer: ${updated.customer.name}`);
+
+    try {
+      dispatchNotificationAsync({
+        tenantId: req.tenantId,
+        recipientCustomerId: quote.customerId,
+        recipientRole: 'CUSTOMER',
+        type: 'QUOTE_APPROVED',
+        title: `New Quotation #${quote.quoteNumber}`,
+        message: `Your sales representative shared quotation #${quote.quoteNumber}. Valid until ${validUntilDate.toLocaleDateString()}.`,
+        entityType: 'QUOTATION',
+        entityId: quote.id,
+      });
+    } catch (notifErr) {
+      console.error('[SEND_NOTIF_ERROR]:', notifErr);
+    }
 
     res.json({
       success: true,

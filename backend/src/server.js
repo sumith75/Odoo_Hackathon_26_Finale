@@ -27,6 +27,7 @@ import customerDealRoomRoutes from './modules/customerDealRoom/customerRoutes.js
 
 // Multi-Tenant Finance & Operations Module
 import financeRoutes from './modules/finance/financeRoutes.js';
+import paymentRoutes, { invoicePaymentsRouter } from './modules/payments/paymentRoutes.js';
 
 // Production Multi-Tenant Routes Only - All backed by Neon PostgreSQL & Prisma
 import { requestCorrelationMiddleware } from './middleware/requestCorrelation.js';
@@ -37,9 +38,21 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Production Middleware
-app.use(cors());
-app.use(express.json());
+// Production Middleware & Security Headers
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  next();
+});
+
+const corsOptions = {
+  origin: process.env.CLIENT_URL || true,
+  credentials: true,
+};
+app.use(cors(corsOptions));
+app.use(express.json({ limit: '2mb' }));
 app.use(requestCorrelationMiddleware);
 app.use(idempotencyMiddleware);
 app.use(morgan('dev'));
@@ -87,9 +100,14 @@ const readinessHandler = async (req, res) => {
 app.get('/ready', readinessHandler);
 app.get('/api/ready', readinessHandler);
 
-// ── Multi-Tenant Core Routes (Admin Portal & Auth) ──────────────────────────
+import notificationRoutes from './modules/notifications/notificationRoutes.js';
+import auditRoutes from './modules/audit/auditRoutes.js';
+
+// Multi-Tenant Core Routes (Admin Portal & Auth)
 app.use('/api/auth/login', authRateLimiter);
 app.use('/api/auth', authRoutes);
+app.use('/api/notifications', notificationRoutes);
+app.use('/api/audit', auditRoutes);
 app.use('/api/organization', organizationRoutes);
 app.use('/api/team', teamRoutes);
 app.use('/api/products', productRoutes);
@@ -98,12 +116,6 @@ app.use('/api/approval-rules', approvalRuleRoutes);
 app.use('/api/admin/dashboard', dashboardRoutes);
 app.use('/api/admin/warehouses', warehouseAdminRoutes);
 app.use('/api/admin', dashboardRoutes);
-app.use('/api/audit', (req, res, next) => {
-  const queryIdx = req.url.indexOf('?');
-  const queryPart = queryIdx !== -1 ? req.url.substring(queryIdx) : '';
-  req.url = '/audit' + queryPart;
-  dashboardRoutes(req, res, next);
-});
 
 // ── Multi-Tenant Sales Representative & CPQ Studio Routes ───────────────────
 app.use('/api/customers', customersRoutes);
@@ -120,18 +132,23 @@ app.use('/api/customer', customerDealRoomRoutes);
 // ── Multi-Tenant Finance & Operations Module ─────────────────────────────────
 app.use('/api/finance', financeRoutes);
 
+// ── Multi-Tenant Payments & Billing Settlement Module ─────────────────────────
+app.use('/api/payments', paymentRoutes);
+app.use('/api/invoices', invoicePaymentsRouter);
+
 // ── Database-backed Aliases for API Compatibility ────────────────────────
 app.use('/api/quotes', quotationRoutes);
 app.use('/api/customer-legacy', customersRoutes);
 
-// Consistent Global Error Handler (Section 42)
+// Consistent Global Error Handler (Section 42 & Security Hardening)
 app.use((err, req, res, next) => {
-  console.error('Unhandled Server Error:', err);
-  res.status(500).json({
+  const statusCode = err.statusCode || err.status || 500;
+  console.error(`[SERVER_ERROR ${statusCode}]:`, err.message);
+  res.status(statusCode).json({
     success: false,
     error: {
-      code: 'INTERNAL_SERVER_ERROR',
-      message: 'An unexpected server error occurred.',
+      code: err.code || (statusCode === 500 ? 'INTERNAL_SERVER_ERROR' : 'ERROR'),
+      message: err.message || 'An unexpected server error occurred.',
       details: process.env.NODE_ENV === 'development' ? err.message : undefined,
     },
   });
@@ -140,12 +157,52 @@ app.use((err, req, res, next) => {
 // Initialize Database & Start Server
 async function startServer() {
   await initDb();
-  app.listen(PORT, () => {
+
+  const server = app.listen(PORT, () => {
     console.log(`====================================================`);
     console.log(`🚀 DealFlow360 Multi-Tenant Engine running on port ${PORT}`);
     console.log(`📡 Health Check: http://localhost:${PORT}/api/health`);
+    console.log(`📡 Ready Check:  http://localhost:${PORT}/api/ready`);
     console.log(`====================================================`);
   });
+
+  // ── Graceful Shutdown (SIGTERM from Docker/K8s, SIGINT from Ctrl+C) ──────
+  const shutdown = async (signal) => {
+    console.log(`\n[SHUTDOWN] Received ${signal}. Starting graceful shutdown...`);
+
+    server.close(async () => {
+      console.log('[SHUTDOWN] HTTP server closed. Closing database connections...');
+      try {
+        await prisma.$disconnect();
+        console.log('[SHUTDOWN] Prisma disconnected.');
+      } catch (err) {
+        console.warn('[SHUTDOWN] Prisma disconnect error (non-fatal):', err.message);
+      }
+
+      try {
+        if (redis && typeof redis.quit === 'function') {
+          await redis.quit();
+          console.log('[SHUTDOWN] Redis disconnected.');
+        }
+      } catch (err) {
+        console.warn('[SHUTDOWN] Redis disconnect error (non-fatal):', err.message);
+      }
+
+      console.log('[SHUTDOWN] Graceful shutdown complete. Exiting.');
+      process.exit(0);
+    });
+
+    // Force exit if graceful shutdown takes too long
+    setTimeout(() => {
+      console.error('[SHUTDOWN] Forced exit after 10s timeout.');
+      process.exit(1);
+    }, 10000);
+  };
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT',  () => shutdown('SIGINT'));
+
+  return server;
 }
 
 startServer();

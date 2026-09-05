@@ -18,6 +18,8 @@ import {
   Warehouse,
 } from 'lucide-react';
 
+import NotificationBell from '../common/NotificationBell';
+
 const ADMIN_NAVIGATION = [
   { id: 'dashboard', label: 'Admin Dashboard', icon: LayoutDashboard },
   { id: 'organization', label: 'Organization Setup', icon: Building2 },
@@ -27,7 +29,7 @@ const ADMIN_NAVIGATION = [
   { id: 'discount-rules', label: 'Discount Rules', icon: Percent },
   { id: 'approval-rules', label: 'Approval Rules', icon: CheckCheck },
   { id: 'warehouses', label: 'Warehouses & Inventory', icon: Warehouse },
-  { id: 'audit', label: 'Audit Activity', icon: History },
+  { id: 'activity', label: 'System Activity Center', icon: History },
 ];
 
 export default function AdminLayout({ activeTab, onSelectTab, children }) {
@@ -75,6 +77,8 @@ export default function AdminLayout({ activeTab, onSelectTab, children }) {
 
           {/* Right User Controls */}
           <div className="flex items-center gap-3">
+            <NotificationBell />
+
             <div className="flex items-center gap-3 px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-200">
               <div className="w-7 h-7 rounded-full bg-green-700 text-white font-bold text-xs flex items-center justify-center">
                 {user?.name?.charAt(0) || 'A'}

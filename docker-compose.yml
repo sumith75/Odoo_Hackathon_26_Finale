@@ -1,69 +1,95 @@
 version: '3.8'
 
+# ─────────────────────────────────────────────────────────────────────────────
+# DealFlow360 — Docker Compose Production Stack
+#
+# Services:
+#   postgres  → PostgreSQL 16 (Primary authoritative source of truth)
+#   redis     → Redis 7 (Caching, rate limiting, idempotency, job coordination)
+#   backend   → Node.js/Express API server
+#   frontend  → React SPA served via nginx (proxies /api to backend)
+#
+# Setup:
+#   1. Copy backend/.env.example to backend/.env and configure secrets
+#   2. docker compose up -d
+#   3. docker compose exec backend npm run seed:demo
+# ─────────────────────────────────────────────────────────────────────────────
+
 services:
-  # PostgreSQL Database (Primary Transactional Source of Truth - Point 3)
+  # ── PostgreSQL (Primary Source of Truth) ──────────────────────────────────
   postgres:
     image: postgres:16-alpine
     container_name: dealflow360-postgres
-    restart: always
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgrespassword
-      POSTGRES_DB: dealflow360
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgrespassword}
+      POSTGRES_DB: ${POSTGRES_DB:-dealflow360}
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./backend/database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
-      - ./backend/database/seed.sql:/docker-entrypoint-initdb.d/02-seed.sql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d dealflow360"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-dealflow360}"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
 
-  # Redis Cache & Distributed Lock/Rate Limiter (Point 6 & 11)
+  # ── Redis (Cache / Rate Limiting / Idempotency / Job Queue) ───────────────
   redis:
     image: redis:7-alpine
     container_name: dealflow360-redis
-    restart: always
+    restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6379}:6379"
     volumes:
       - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
 
-  # Stateless API Server (Point 1 & 2)
+  # ── Backend API (Stateless Node.js/Express) ────────────────────────────────
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
     container_name: dealflow360-backend
-    restart: always
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
     environment:
       PORT: 5000
       NODE_ENV: production
-      DATABASE_URL: postgresql://postgres:postgrespassword@postgres:5432/dealflow360
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgrespassword}@postgres:5432/${POSTGRES_DB:-dealflow360}
       REDIS_URL: redis://redis:6379
-      LOG_FORMAT: json
+      CLIENT_URL: http://localhost:80
     ports:
       - "5000:5000"
     depends_on:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:5000/health').then(r => process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
-  # Frontend Web UI (Point 1 & 22)
+  # ── Frontend (React SPA via nginx — proxies /api to backend) ──────────────
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
     container_name: dealflow360-frontend
-    restart: always
+    restart: unless-stopped
     ports:
       - "80:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
 
 volumes:
   pgdata:

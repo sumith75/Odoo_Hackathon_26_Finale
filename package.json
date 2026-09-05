@@ -1,11 +1,19 @@
 {
-  "name": "odoo-finale",
-  "version": "1.0.0",
-  "main": "index.js",
+  "name": "dealflow360",
+  "version": "3.0.0",
+  "description": "DealFlow360 — Smart B2B Deal Governance & Fulfillment Engine",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev:backend": "cd backend && npm run dev",
+    "dev:frontend": "cd frontend && npm run dev",
+    "start:backend": "cd backend && npm start",
+    "build:frontend": "cd frontend && npm run build",
+    "seed": "cd backend && npm run seed:demo",
+    "test:all": "cd backend && npm run test:all",
+    "test:e2e": "cd backend && npm run test:e2e",
+    "test:security": "cd backend && npm run test:security",
+    "install:all": "npm --prefix backend install && npm --prefix frontend install"
   },
+  "keywords": ["b2b", "cpq", "deal-management", "approval-workflow", "billing"],
   "author": "",
-  "license": "ISC",
-  "description": ""
+  "license": "ISC"
 }

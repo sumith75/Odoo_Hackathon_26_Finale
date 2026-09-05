@@ -16,6 +16,8 @@ import {
   Sparkles,
 } from 'lucide-react';
 
+import NotificationBell from '../common/NotificationBell';
+
 const MANAGER_NAV_ITEMS = [
   { id: 'dashboard', path: '/manager/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'approvals', path: '/manager/approvals', label: 'Approval Inbox', icon: Inbox, hasBadge: true },
@@ -86,6 +88,8 @@ export default function ManagerLayout({ activeTab, onSelectTab, children }) {
 
           {/* Right User Controls */}
           <div className="flex items-center gap-3">
+            <NotificationBell />
+
             {pendingCount > 0 && (
               <button
                 onClick={() => onSelectTab('approvals')}

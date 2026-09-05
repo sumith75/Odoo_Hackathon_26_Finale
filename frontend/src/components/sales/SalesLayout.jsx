@@ -14,6 +14,8 @@ import {
   PlusCircle,
 } from 'lucide-react';
 
+import NotificationBell from '../common/NotificationBell';
+
 const SALES_NAV_ITEMS = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'deals', label: 'My Deals', icon: FileText },
@@ -72,6 +74,8 @@ export default function SalesLayout({ activeTab, onSelectTab, onNewQuote, childr
             >
               <PlusCircle size={15} /> + New Quote
             </button>
+
+            <NotificationBell />
 
             <div className="flex items-center gap-3 px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-200">
               <div className="w-7 h-7 rounded-full bg-blue-600 text-white font-bold text-xs flex items-center justify-center">

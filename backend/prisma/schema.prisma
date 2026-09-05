@@ -95,6 +95,7 @@ model Organization {
   invoices      Invoice[]
   invoiceItems  InvoiceItem[]
   payments      Payment[]
+  notifications Notification[]
 
   @@map("organizations")
 }
@@ -116,10 +117,11 @@ model User {
   createdAt    DateTime   @default(now()) @map("created_at")
   updatedAt    DateTime   @default(now()) @updatedAt @map("updated_at")
 
-  tenant     Organization @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  auditLogs  AuditLog[]
-  quotations Quotation[]
-  approvals  Approval[]
+  tenant        Organization   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  auditLogs     AuditLog[]
+  quotations    Quotation[]
+  approvals     Approval[]
+  notifications Notification[]
 
   @@unique([tenantId, email])
   @@index([tenantId])
@@ -151,6 +153,7 @@ model Customer {
   changeRequests   QuoteChangeRequest[]
   negotiations     NegotiationProposal[]
   notifications    CustomerNotification[]
+  userNotifications Notification[]
   subscriptions    Subscription[]
   invoices         Invoice[]
   payments         Payment[]
@@ -329,6 +332,7 @@ model Quotation {
   @@index([tenantId])
   @@index([tenantId, salesRepId])
   @@index([tenantId, status])
+  @@index([tenantId, createdAt])
   @@index([customerId])
   @@map("quotations")
 }
@@ -378,21 +382,62 @@ model QuotationItem {
 // ============================================================
 
 model AuditLog {
-  id         String   @id @default(uuid())
-  tenantId   String   @map("tenant_id")
-  userId     String?  @map("user_id")
-  action     String
-  entityType String   @map("entity_type")
-  entityId   String?  @map("entity_id")
-  metadata   Json?
-  createdAt  DateTime @default(now()) @map("created_at")
+  id          String   @id @default(uuid())
+  tenantId    String   @map("tenant_id")
+  userId      String?  @map("user_id")
+  actorRole   String?  @map("actor_role")
+  action      String
+  entityType  String   @map("entity_type")
+  entityId    String?  @map("entity_id")
+  description String?
+  beforeState Json?    @map("before_state")
+  afterState  Json?    @map("after_state")
+  metadata    Json?
+  ipAddress   String?  @map("ip_address")
+  userAgent   String?  @map("user_agent")
+  createdAt   DateTime @default(now()) @map("created_at")
 
   tenant Organization @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   user   User?        @relation(fields: [userId], references: [id])
 
   @@index([tenantId])
   @@index([tenantId, createdAt])
+  @@index([entityType, entityId])
   @@map("audit_logs")
+}
+
+// ============================================================
+// NOTIFICATIONS (Multi-Tenant & Role-Based Event Delivery)
+// ============================================================
+
+model Notification {
+  id                  String    @id @default(uuid())
+  tenantId            String    @map("tenant_id")
+  recipientUserId     String?   @map("recipient_user_id")
+  recipientCustomerId String?   @map("recipient_customer_id")
+  type                String
+  title               String
+  message             String
+  entityType          String?   @map("entity_type")
+  entityId            String?   @map("entity_id")
+  actionUrl           String?   @map("action_url")
+  metadata            Json?
+  isRead              Boolean   @default(false) @map("is_read")
+  readAt              DateTime? @map("read_at")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  tenant            Organization @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  recipientUser     User?        @relation(fields: [recipientUserId], references: [id], onDelete: Cascade)
+  recipientCustomer Customer?    @relation(fields: [recipientCustomerId], references: [id], onDelete: Cascade)
+
+  @@index([recipientUserId, isRead])
+  @@index([recipientCustomerId, isRead])
+  @@index([tenantId, createdAt])
+  @@index([recipientUserId, createdAt])
+  @@index([recipientCustomerId, createdAt])
+  @@index([entityType, entityId])
+  @@map("notifications")
 }
 
 // ============================================================
@@ -522,6 +567,7 @@ model NegotiationProposal {
   customer      Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
 
   @@index([tenantId])
+  @@index([tenantId, status])
   @@index([quotationId])
   @@index([customerId])
   @@map("negotiation_proposals")
@@ -685,6 +731,7 @@ model Invoice {
   @@index([tenantId, quotationId])
   @@index([tenantId, customerId])
   @@index([tenantId, status])
+  @@index([tenantId, createdAt])
   @@map("invoices")
 }
 
@@ -720,12 +767,19 @@ model Payment {
   invoiceId            String   @map("invoice_id")
   customerId           String   @map("customer_id")
   amount               Decimal  @db.Decimal(12, 2)
+  refundedAmount       Decimal  @default(0) @map("refunded_amount") @db.Decimal(12, 2)
   currency             String   @default("INR")
-  status               String   @default("SUCCESS") // PENDING, SUCCESS, FAILED, REFUNDED
-  paymentMethod        String   @default("SIMULATED") @map("payment_method") // SIMULATED, CARD, BANK_TRANSFER, UPI
+  status               String   @default("SUCCEEDED") // PENDING, PROCESSING, SUCCEEDED, SUCCESS, FAILED, PARTIALLY_REFUNDED, REFUNDED
+  paymentMethod        String   @default("SIMULATED") @map("payment_method") // SIMULATED, CARD, BANK_TRANSFER, UPI, CASH
+  provider             String   @default("SIMULATED")
   transactionReference String   @map("transaction_reference")
+  idempotencyKey       String?  @map("idempotency_key")
+  notes                String?
+  failureReason        String?  @map("failure_reason")
+  recordedBy           String?  @map("recorded_by")
   paidAt               DateTime @default(now()) @map("paid_at")
   createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @default(now()) @updatedAt @map("updated_at")
 
   tenant   Organization @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   invoice  Invoice      @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
@@ -734,6 +788,10 @@ model Payment {
   @@unique([tenantId, transactionReference])
   @@index([tenantId])
   @@index([tenantId, invoiceId])
+  @@index([tenantId, customerId])
+  @@index([tenantId, status])
+  @@index([tenantId, idempotencyKey])
+  @@index([tenantId, paidAt])
   @@map("payments")
 }
 

@@ -76,7 +76,8 @@ router.post('/register/admin', async (req, res) => {
         email: cleanEmail,
         passwordHash,
         role: 'admin',
-        team: orgName ? `${orgName.trim()} (${businessType || 'Enterprise'})` : 'Executive',
+        organization: orgName ? orgName.trim() : 'DealFlow360 Inc.',
+        companyName: orgName ? orgName.trim() : 'DealFlow360 Inc.',
       },
     });
 
@@ -85,9 +86,10 @@ router.post('/register/admin', async (req, res) => {
       name: newUser.name,
       email: newUser.email,
       role: 'ADMIN',
-      orgName: orgName || 'DealFlow360 Enterprise',
+      organization: newUser.organization,
+      companyName: newUser.companyName,
+      orgName: newUser.organization,
       businessType: businessType || 'Technology',
-      team: newUser.team,
       avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=16a34a&color=fff`,
       createdAt: newUser.createdAt,
     };
@@ -129,6 +131,7 @@ router.post('/register/customer', async (req, res) => {
         name: name.trim(),
         email: cleanEmail,
         passwordHash,
+        companyName: companyName?.trim() || name.trim(),
         tier: 'bronze',
         currency: 'USD',
       },
@@ -139,7 +142,8 @@ router.post('/register/customer', async (req, res) => {
       name: newCustomer.name,
       email: newCustomer.email,
       role: 'CUSTOMER',
-      companyName: companyName?.trim() || newCustomer.name,
+      companyName: newCustomer.companyName,
+      organization: newCustomer.companyName,
       tier: newCustomer.tier,
       currency: newCustomer.currency,
       avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=2563eb&color=fff`,
@@ -187,13 +191,15 @@ router.post('/login', async (req, res) => {
         name: dbUser.name,
         email: dbUser.email,
         role: frontendRole,
-        team: dbUser.team,
+        organization: dbUser.organization || dbUser.companyName || 'DealFlow360 Inc.',
+        companyName: dbUser.companyName || dbUser.organization || 'DealFlow360 Inc.',
+        orgName: dbUser.organization || dbUser.companyName || 'DealFlow360 Inc.',
         avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(dbUser.name)}&background=16a34a&color=fff`,
         createdAt: dbUser.createdAt,
       };
 
       const token = generateToken(safeUser);
-      console.log(`🔑 [AUTH] Internal login: ${safeUser.name} <${safeUser.email}> [${safeUser.role}]`);
+      console.log(`🔑 [AUTH] Internal login: ${safeUser.name} <${safeUser.email}> [${safeUser.role}] — ${safeUser.organization}`);
 
       return res.json({ success: true, token, user: safeUser });
     }
@@ -214,6 +220,8 @@ router.post('/login', async (req, res) => {
         name: dbCustomer.name,
         email: dbCustomer.email,
         role: 'CUSTOMER',
+        companyName: dbCustomer.companyName || dbCustomer.name,
+        organization: dbCustomer.companyName || dbCustomer.name,
         tier: dbCustomer.tier,
         currency: dbCustomer.currency,
         avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(dbCustomer.name)}&background=2563eb&color=fff`,
@@ -285,7 +293,8 @@ router.post('/team/add', async (req, res) => {
         email: cleanEmail,
         passwordHash,
         role: dbRole,
-        team: team?.trim() || 'Core Team',
+        organization: 'DealFlow360 Inc.',
+        companyName: 'DealFlow360 Inc.',
       },
     });
 
@@ -294,7 +303,8 @@ router.post('/team/add', async (req, res) => {
       name: newMember.name,
       email: newMember.email,
       role: DB_TO_FRONTEND_ROLE[newMember.role] || role,
-      team: newMember.team,
+      organization: newMember.organization,
+      companyName: newMember.companyName,
       avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(newMember.name)}&background=3b82f6&color=fff`,
       createdAt: newMember.createdAt,
     };
@@ -339,7 +349,8 @@ router.get('/team', async (req, res) => {
         name: true,
         email: true,
         role: true,
-        team: true,
+        organization: true,
+        companyName: true,
         createdAt: true,
       },
       orderBy: { createdAt: 'desc' },
@@ -372,7 +383,7 @@ router.get('/me', async (req, res) => {
     // Check user table
     const dbUser = await prisma.user.findUnique({
       where: { email: decoded.email },
-      select: { id: true, name: true, email: true, role: true, team: true, createdAt: true },
+      select: { id: true, name: true, email: true, role: true, organization: true, companyName: true, createdAt: true },
     });
 
     if (dbUser) {
@@ -389,7 +400,7 @@ router.get('/me', async (req, res) => {
     // Check customer table
     const dbCustomer = await prisma.customer.findUnique({
       where: { email: decoded.email },
-      select: { id: true, name: true, email: true, tier: true, currency: true, createdAt: true },
+      select: { id: true, name: true, email: true, companyName: true, tier: true, currency: true, createdAt: true },
     });
 
     if (dbCustomer) {
@@ -398,6 +409,7 @@ router.get('/me', async (req, res) => {
         user: {
           ...dbCustomer,
           role: 'CUSTOMER',
+          organization: dbCustomer.companyName || dbCustomer.name,
           avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(dbCustomer.name)}&background=2563eb&color=fff`,
         },
       });

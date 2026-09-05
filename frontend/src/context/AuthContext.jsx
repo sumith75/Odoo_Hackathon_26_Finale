@@ -2,39 +2,55 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 
 const AuthContext = createContext(null);
 
-// Role → default tab mapping
-const ROLE_TAB = {
-  ADMIN:           'admin',
-  SALES_REP:       'sales',
-  SALES_MANAGER:   'manager',
-  FINANCE_MANAGER: 'billing',
-  CUSTOMER:        'customer',
+// Role mappings
+export const ROLE_DEFAULT_VIEW = {
+  ADMIN: 'admin',
+  SALES_REP: 'sales_rep',
+  SALES_MANAGER: 'sales_manager',
+  FINANCE_OPERATIONS: 'finance_operations',
+  CUSTOMER: 'customer',
 };
 
 export function AuthProvider({ children }) {
-  const [user, setUser]       = useState(null);
-  const [token, setToken]     = useState(() => localStorage.getItem('df360_token') || null);
+  const [user, setUser] = useState(null);
+  const [token, setToken] = useState(() => localStorage.getItem('df360_token') || null);
   const [isLoading, setIsLoading] = useState(true);
 
   // Restore session on mount
   useEffect(() => {
-    const savedUser  = localStorage.getItem('df360_user');
-    const savedToken = localStorage.getItem('df360_token');
-
-    if (savedUser && savedToken) {
-      try {
-        const parsed = JSON.parse(savedUser);
-        setUser({ ...parsed, tab: ROLE_TAB[parsed.role] || 'sales' });
-        setToken(savedToken);
-      } catch {
-        localStorage.removeItem('df360_user');
-        localStorage.removeItem('df360_token');
+    const initAuth = async () => {
+      const savedToken = localStorage.getItem('df360_token');
+      if (savedToken) {
+        try {
+          const res = await fetch('/api/auth/me', {
+            headers: { Authorization: `Bearer ${savedToken}` },
+          });
+          const data = await res.json();
+          if (res.ok && data.success && data.user) {
+            setUser(data.user);
+            setToken(savedToken);
+          } else {
+            localStorage.removeItem('df360_token');
+            localStorage.removeItem('df360_user');
+            setUser(null);
+            setToken(null);
+          }
+        } catch {
+          const savedUser = localStorage.getItem('df360_user');
+          if (savedUser) {
+            try {
+              setUser(JSON.parse(savedUser));
+            } catch {}
+          }
+        }
       }
-    }
-    setIsLoading(false);
+      setIsLoading(false);
+    };
+
+    initAuth();
   }, []);
 
-  // ── Login (all roles) ──────────────────────────────────────────────────────
+  // ── Login ──────────────────────────────────────────────────────────────────
   const login = async (email, password) => {
     setIsLoading(true);
     try {
@@ -49,12 +65,11 @@ export function AuthProvider({ children }) {
         throw new Error(data.message || 'Login failed');
       }
 
-      const fullUser = { ...data.user, tab: ROLE_TAB[data.user.role] || 'sales' };
-      setUser(fullUser);
+      setUser(data.user);
       setToken(data.token);
-      localStorage.setItem('df360_user', JSON.stringify(fullUser));
+      localStorage.setItem('df360_user', JSON.stringify(data.user));
       localStorage.setItem('df360_token', data.token);
-      return { success: true, user: fullUser };
+      return { success: true, user: data.user };
     } catch (err) {
       return { success: false, message: err.message };
     } finally {
@@ -62,24 +77,26 @@ export function AuthProvider({ children }) {
     }
   };
 
-  // ── Register Admin ─────────────────────────────────────────────────────────
-  const registerAdmin = async ({ name, email, password, orgName, businessType }) => {
+  // ── Register Organization (Admin) ──────────────────────────────────────────
+  const registerOrganization = async (formData) => {
     setIsLoading(true);
     try {
-      const res = await fetch('/api/auth/register/admin', {
+      const res = await fetch('/api/auth/register-organization', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email, password, orgName, businessType }),
+        body: JSON.stringify(formData),
       });
       const data = await res.json();
-      if (!res.ok || !data.success) throw new Error(data.message || 'Registration failed');
 
-      const fullUser = { ...data.user, tab: 'admin' };
-      setUser(fullUser);
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || 'Registration failed');
+      }
+
+      setUser(data.user);
       setToken(data.token);
-      localStorage.setItem('df360_user', JSON.stringify(fullUser));
+      localStorage.setItem('df360_user', JSON.stringify(data.user));
       localStorage.setItem('df360_token', data.token);
-      return { success: true, user: fullUser };
+      return { success: true, user: data.user };
     } catch (err) {
       return { success: false, message: err.message };
     } finally {
@@ -88,23 +105,25 @@ export function AuthProvider({ children }) {
   };
 
   // ── Register Customer ──────────────────────────────────────────────────────
-  const registerCustomer = async ({ name, email, password, companyName }) => {
+  const registerCustomer = async (formData) => {
     setIsLoading(true);
     try {
-      const res = await fetch('/api/auth/register/customer', {
+      const res = await fetch('/api/auth/register-customer', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email, password, companyName }),
+        body: JSON.stringify(formData),
       });
       const data = await res.json();
-      if (!res.ok || !data.success) throw new Error(data.message || 'Registration failed');
 
-      const fullUser = { ...data.user, tab: 'customer' };
-      setUser(fullUser);
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || data.error?.message || 'Customer registration failed');
+      }
+
+      setUser(data.user);
       setToken(data.token);
-      localStorage.setItem('df360_user', JSON.stringify(fullUser));
+      localStorage.setItem('df360_user', JSON.stringify(data.user));
       localStorage.setItem('df360_token', data.token);
-      return { success: true, user: fullUser };
+      return { success: true, user: data.user };
     } catch (err) {
       return { success: false, message: err.message };
     } finally {
@@ -112,32 +131,32 @@ export function AuthProvider({ children }) {
     }
   };
 
-  // ── Add Team Member (Admin only) ───────────────────────────────────────────
-  const addTeamMember = async ({ name, email, role, password }) => {
+  // ── Refresh user profile ───────────────────────────────────────────────────
+  const refreshUser = async () => {
+    if (!token) return;
     try {
-      const res = await fetch('/api/auth/team/add', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ name, email, role, password }),
+      const res = await fetch('/api/auth/me', {
+        headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
-      if (!res.ok || !data.success) throw new Error(data.message || 'Failed to add member');
-      return { success: true, user: data.user };
+      if (res.ok && data.success && data.user) {
+        setUser(data.user);
+        localStorage.setItem('df360_user', JSON.stringify(data.user));
+      }
     } catch (err) {
-      return { success: false, message: err.message };
+      console.error('Failed to refresh user', err);
     }
   };
 
   // ── Logout ─────────────────────────────────────────────────────────────────
   const logout = async () => {
     try {
-      await fetch('/api/auth/logout', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      if (token) {
+        await fetch('/api/auth/logout', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+      }
     } catch {}
     setUser(null);
     setToken(null);
@@ -146,17 +165,19 @@ export function AuthProvider({ children }) {
   };
 
   return (
-    <AuthContext.Provider value={{
-      user,
-      token,
-      isAuthenticated: Boolean(user),
-      isLoading,
-      login,
-      registerAdmin,
-      registerCustomer,
-      addTeamMember,
-      logout,
-    }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        token,
+        isAuthenticated: Boolean(user && token),
+        isLoading,
+        login,
+        registerOrganization,
+        registerCustomer,
+        refreshUser,
+        logout,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );

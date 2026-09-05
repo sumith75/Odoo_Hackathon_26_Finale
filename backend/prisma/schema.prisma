@@ -11,104 +11,151 @@ datasource db {
 // ============================================================
 
 enum UserRole {
-  sales_rep
-  sales_manager
-  finance
-  admin
+  ADMIN
+  SALES_REP
+  SALES_MANAGER
+  FINANCE_OPERATIONS
+  CUSTOMER
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum ProductType {
+  HARDWARE
+  SERVICE
+  SUBSCRIPTION
+  BUNDLE
 }
 
 enum CustomerTier {
-  bronze
-  silver
-  gold
-}
-
-enum ProductCategory {
-  hardware
-  services
-  subscription
-}
-
-enum BillingCycle {
-  monthly
-  quarterly
-  yearly
-}
-
-enum ApprovalLevelType {
-  none
-  sales_manager
-  sales_manager_then_finance
-}
-
-enum ApprovalDecision {
-  pending
-  approved
-  rejected
-  returned_for_revision
+  BRONZE
+  SILVER
+  GOLD
 }
 
 enum QuotationStatus {
-  draft
-  pending_approval
-  approved
-  under_negotiation
-  confirmed
-  split_pending
-  backorder
-  cancelled
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  RETURNED_FOR_REVISION
+  SENT_TO_CUSTOMER
+  NEGOTIATION
+  CUSTOMER_CONFIRMED
+  FULFILLMENT
+  PARTIALLY_FULFILLED
+  FULFILLED
+  INVOICED
+  PAID
+  CANCELLED
 }
 
-enum SubscriptionStatus {
-  active
-  paused
-  cancelled
-}
-
-enum InvoiceStatus {
-  unpaid
-  paid
-  partially_paid
-  refunded
-}
-
-enum AlertType {
-  stalled_deal
-  discount_anomaly
-  delivery_slippage
+enum ApprovalStatus {
+  NONE
+  PENDING_MANAGER
+  PENDING_FINANCE
+  APPROVED
+  REJECTED
+  RETURNED_FOR_REVISION
 }
 
 // ============================================================
-// USERS & CUSTOMERS
+// ORGANIZATIONS (TENANTS)
+// ============================================================
+
+model Organization {
+  id           String   @id @default(uuid())
+  name         String
+  companyEmail String?  @map("company_email")
+  phone        String?
+  industry     String?
+  country      String?  @default("India")
+  currency     String   @default("INR")
+  timezone     String   @default("Asia/Kolkata")
+  address      String?
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at")
+
+  users         User[]
+  products      Product[]
+  discountRules DiscountRule[]
+  approvalRules ApprovalRule[]
+  auditLogs     AuditLog[]
+  customers     Customer[]
+  quotations    Quotation[]
+  approvals     Approval[]
+  warehouses    Warehouse[]
+  inventories   Inventory[]
+  warehouseAllocations WarehouseAllocation[]
+  subscriptions Subscription[]
+  invoices      Invoice[]
+  invoiceItems  InvoiceItem[]
+  payments      Payment[]
+
+  @@map("organizations")
+}
+
+// ============================================================
+// USERS
 // ============================================================
 
 model User {
-  id           String   @id @default(uuid())
+  id           String     @id @default(uuid())
+  tenantId     String     @map("tenant_id")
   name         String
-  email        String   @unique
-  passwordHash String   @map("password_hash")
+  email        String
+  passwordHash String     @map("password_hash")
   role         UserRole
-  team         String?
-  createdAt    DateTime @default(now()) @map("created_at")
+  status       UserStatus @default(ACTIVE)
+  phone        String?
+  lastLogin    DateTime?  @map("last_login")
+  createdAt    DateTime   @default(now()) @map("created_at")
+  updatedAt    DateTime   @default(now()) @updatedAt @map("updated_at")
 
-  quotations Quotation[]
-  approvals  Approval[]  @relation("AssignedApprover")
+  tenant     Organization @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   auditLogs  AuditLog[]
+  quotations Quotation[]
+  approvals  Approval[]
 
+  @@unique([tenantId, email])
+  @@index([tenantId])
+  @@index([tenantId, role])
+  @@index([tenantId, status])
   @@map("users")
 }
 
+// ============================================================
+// CUSTOMERS
+// ============================================================
+
 model Customer {
   id           String       @id @default(uuid())
+  tenantId     String       @map("tenant_id")
   name         String
-  email        String       @unique
+  email        String
   passwordHash String?      @map("password_hash")
-  tier         CustomerTier @default(bronze)
-  currency     String       @default("USD")
+  companyName  String?      @map("company_name")
+  tier         CustomerTier @default(BRONZE)
+  currency     String       @default("INR")
+  status       UserStatus   @default(ACTIVE)
   createdAt    DateTime     @default(now()) @map("created_at")
+  updatedAt    DateTime     @default(now()) @updatedAt @map("updated_at")
 
-  quotations Quotation[]
+  tenant           Organization           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  quotations       Quotation[]
+  deliveryRequests DeliveryRequest[]
+  changeRequests   QuoteChangeRequest[]
+  negotiations     NegotiationProposal[]
+  notifications    CustomerNotification[]
+  subscriptions    Subscription[]
+  invoices         Invoice[]
+  payments         Payment[]
 
+  @@unique([tenantId, email])
+  @@index([tenantId])
   @@map("customers")
 }
 
@@ -117,144 +164,86 @@ model Customer {
 // ============================================================
 
 model Product {
-  id              String          @id @default(uuid())
-  name            String
-  category        ProductCategory
-  description     String?
-  basePrice       Decimal         @map("base_price") @db.Decimal(12, 2)
-  unit            String          @default("each")
-  taxPct          Decimal         @default(0) @map("tax_pct") @db.Decimal(5, 2)
-  isSubscription  Boolean         @default(false) @map("is_subscription")
-  status          String          @default("active")
-  createdAt       DateTime        @default(now()) @map("created_at")
+  id                    String      @id @default(uuid())
+  tenantId              String      @map("tenant_id")
+  name                  String
+  sku                   String
+  description           String?
+  type                  ProductType
+  category              String?
+  unitPrice             Decimal     @map("unit_price") @db.Decimal(12, 2)
+  costPrice             Decimal     @default(0) @map("cost_price") @db.Decimal(12, 2)
+  currency              String      @default("INR")
+  billingType           String?     @default("ONE_TIME") @map("billing_type")
+  billingInterval       String?     @map("billing_interval") // MONTHLY, YEARLY
+  taxRate               Decimal     @default(0) @map("tax_rate") @db.Decimal(5, 2)
+  maxDiscountPercentage Decimal     @default(0) @map("max_discount_percentage") @db.Decimal(5, 2)
+  isInventoryTracked    Boolean     @default(false) @map("is_inventory_tracked")
+  isActive              Boolean     @default(true) @map("is_active")
+  createdAt             DateTime    @default(now()) @map("created_at")
+  updatedAt             DateTime    @default(now()) @updatedAt @map("updated_at")
 
-  variants          ProductVariant[]
-  priceLists        PriceList[]
-  warehouseStock    WarehouseStock[]
-  subscriptionPlans SubscriptionPlan[]
-  quotationLines    QuotationLine[]
-  upsellAsBase      UpsellRule[]     @relation("BaseProduct")
-  upsellAsSuggested UpsellRule[]     @relation("SuggestedProduct")
+  tenant               Organization          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  quotationItems       QuotationItem[]
+  inventories          Inventory[]
+  warehouseAllocations WarehouseAllocation[]
+  subscriptions        Subscription[]
+  invoiceItems         InvoiceItem[]
 
+  @@unique([tenantId, sku])
+  @@index([tenantId])
+  @@index([tenantId, type])
+  @@index([tenantId, isActive])
   @@map("products")
 }
 
-model ProductVariant {
-  id         String  @id @default(uuid())
-  productId  String  @map("product_id")
-  attribute  String
-  value      String
-  extraPrice Decimal @default(0) @map("extra_price") @db.Decimal(12, 2)
+// ============================================================
+// DISCOUNT RULES (Defined by Admin, consumed by Risk Engine)
+// ============================================================
 
-  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+model DiscountRule {
+  id                           String      @id @default(uuid())
+  tenantId                     String      @map("tenant_id")
+  name                         String
+  productType                  ProductType @map("product_type")
+  category                     String?
+  customerTier                 String?     @default("ALL") @map("customer_tier")
+  maxDiscountPercentage        Decimal     @map("max_discount_percentage") @db.Decimal(5, 2)
+  requiresApprovalAbove        Decimal     @map("requires_approval_above") @db.Decimal(5, 2)
+  requiresFinanceApprovalAbove Decimal?    @map("requires_finance_approval_above") @db.Decimal(5, 2)
+  isActive                     Boolean     @default(true) @map("is_active")
+  createdAt                    DateTime    @default(now()) @map("created_at")
+  updatedAt                    DateTime    @default(now()) @updatedAt @map("updated_at")
 
-  @@map("product_variants")
-}
+  tenant Organization @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-model PriceList {
-  id            String       @id @default(uuid())
-  productId     String       @map("product_id")
-  tier          CustomerTier
-  currency      String       @default("USD")
-  priceRule     String       @default("no_adjustment") @map("price_rule")
-  resolvedPrice Decimal      @map("resolved_price") @db.Decimal(12, 2)
-
-  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
-
-  @@unique([productId, tier, currency])
-  @@map("price_lists")
+  @@index([tenantId])
+  @@index([tenantId, productType])
+  @@map("discount_rules")
 }
 
 // ============================================================
-// DISCOUNT RULES
+// APPROVAL RULES (Defined by Admin, consumed by Approval Engine)
 // ============================================================
 
-model DiscountTierCeiling {
-  tier           CustomerTier @id
-  maxDiscountPct Decimal      @map("max_discount_pct") @db.Decimal(5, 2)
+model ApprovalRule {
+  id                    String      @id @default(uuid())
+  tenantId              String      @map("tenant_id")
+  name                  String
+  productType           ProductType @map("product_type")
+  minDiscountPercentage Decimal     @map("min_discount_percentage") @db.Decimal(5, 2)
+  maxDiscountPercentage Decimal?    @map("max_discount_percentage") @db.Decimal(5, 2)
+  requiredRole          String      @map("required_role") // SALES_MANAGER, FINANCE_OPERATIONS, SALES_MANAGER_THEN_FINANCE
+  priority              Int         @default(1)
+  isActive              Boolean     @default(true) @map("is_active")
+  createdAt             DateTime    @default(now()) @map("created_at")
+  updatedAt             DateTime    @default(now()) @updatedAt @map("updated_at")
 
-  @@map("discount_tier_ceilings")
-}
+  tenant Organization @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-model CategoryDiscountCeiling {
-  category       ProductCategory @id
-  maxDiscountPct Decimal         @map("max_discount_pct") @db.Decimal(5, 2)
-
-  @@map("category_discount_ceilings")
-}
-
-model ApprovalChainRule {
-  id              String            @id @default(uuid())
-  minOveragePct   Decimal           @map("min_overage_pct") @db.Decimal(5, 2)
-  maxOveragePct   Decimal?          @map("max_overage_pct") @db.Decimal(5, 2)
-  requiredLevel   ApprovalLevelType @map("required_level")
-
-  @@map("approval_chain_rules")
-}
-
-// ============================================================
-// WAREHOUSES
-// ============================================================
-
-model Warehouse {
-  id                 String   @id @default(uuid())
-  name               String
-  shippingCostWeight Decimal  @default(1.0) @map("shipping_cost_weight") @db.Decimal(6, 2)
-  createdAt          DateTime @default(now()) @map("created_at")
-
-  stock        WarehouseStock[]
-  fulfillments Fulfillment[]
-
-  @@map("warehouses")
-}
-
-model WarehouseStock {
-  id                String  @id @default(uuid())
-  warehouseId       String  @map("warehouse_id")
-  productId         String  @map("product_id")
-  inStock           Int     @default(0) @map("in_stock")
-  reserved          Int     @default(0)
-  replenishmentRule String? @map("replenishment_rule")
-
-  warehouse Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
-  product   Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
-
-  @@unique([warehouseId, productId])
-  @@map("warehouse_stock")
-}
-
-// ============================================================
-// SUBSCRIPTIONS
-// ============================================================
-
-model SubscriptionPlan {
-  id                String       @id @default(uuid())
-  productId         String       @map("product_id")
-  cycle             BillingCycle
-  amount            Decimal      @db.Decimal(12, 2)
-  prorationRule     String?      @map("proration_rule")
-  cancellationRule  String?      @map("cancellation_rule")
-  createdAt         DateTime     @default(now()) @map("created_at")
-
-  product         Product           @relation(fields: [productId], references: [id], onDelete: Cascade)
-  quotationLines  QuotationLine[]
-  orderSubscriptions OrderSubscription[]
-
-  @@map("subscription_plans")
-}
-
-model UpsellRule {
-  id                  String   @id @default(uuid())
-  baseProductId        String   @map("base_product_id")
-  suggestedProductId   String   @map("suggested_product_id")
-  coPurchaseScore      Decimal  @default(0) @map("co_purchase_score") @db.Decimal(6, 3)
-  isPromoted           Boolean  @default(false) @map("is_promoted")
-  minMarginPct         Decimal  @default(0) @map("min_margin_pct") @db.Decimal(5, 2)
-
-  baseProduct      Product @relation("BaseProduct", fields: [baseProductId], references: [id], onDelete: Cascade)
-  suggestedProduct Product @relation("SuggestedProduct", fields: [suggestedProductId], references: [id], onDelete: Cascade)
-
-  @@map("upsell_rules")
+  @@index([tenantId])
+  @@index([tenantId, productType])
+  @@map("approval_rules")
 }
 
 // ============================================================
@@ -262,210 +251,453 @@ model UpsellRule {
 // ============================================================
 
 model Quotation {
-  id               String          @id @default(uuid())
-  code             String          @unique
-  customerId       String          @map("customer_id")
-  repId            String          @map("rep_id")
-  status           QuotationStatus @default(draft)
-  blendedRiskScore Decimal?        @default(0) @map("blended_risk_score") @db.Decimal(6, 2)
-  blendedRiskLevel String?         @default("low") @map("blended_risk_level")
-  stalledSince     DateTime?       @map("stalled_since")
-  createdAt        DateTime        @default(now()) @map("created_at")
-  updatedAt        DateTime        @default(now()) @updatedAt @map("updated_at")
+  id                   String          @id @default(uuid())
+  tenantId             String          @map("tenant_id")
+  quoteNumber          String          @map("quote_number")
+  customerId           String          @map("customer_id")
+  salesRepId           String          @map("sales_rep_id")
+  status               QuotationStatus @default(DRAFT)
+  approvalStatus       ApprovalStatus  @default(NONE) @map("approval_status")
+  requiredApproverRole String?         @map("required_approver_role")
+  subtotal             Decimal         @default(0) @db.Decimal(12, 2)
+  discountAmount       Decimal         @default(0) @map("discount_amount") @db.Decimal(12, 2)
+  taxAmount            Decimal         @default(0) @map("tax_amount") @db.Decimal(12, 2)
+  totalAmount          Decimal         @default(0) @map("total_amount") @db.Decimal(12, 2)
+  costAmount           Decimal         @default(0) @map("cost_amount") @db.Decimal(12, 2)
+  marginAmount         Decimal         @default(0) @map("margin_amount") @db.Decimal(12, 2)
+  marginPercentage     Decimal         @default(0) @map("margin_percentage") @db.Decimal(5, 2)
+  riskScore            Int             @default(0) @map("risk_score")
+  riskLevel            String          @default("LOW") @map("risk_level")
+  riskReasons          Json?           @map("risk_reasons")
+  previousTerms        Json?           @map("previous_terms")
+  revisionNotes        String?         @map("revision_notes")
+  notes                String?
+  fulfillmentStatus    String                @default("UNALLOCATED") @map("fulfillment_status")
+  billingStatus        String                @default("UNBILLED") @map("billing_status")
+  validUntil           DateTime?             @map("valid_until")
+  confirmedAt          DateTime?             @map("confirmed_at")
+  createdAt            DateTime              @default(now()) @map("created_at")
+  updatedAt            DateTime              @default(now()) @updatedAt @map("updated_at")
 
-  customer            Customer              @relation(fields: [customerId], references: [id])
-  rep                 User                  @relation(fields: [repId], references: [id])
-  lines               QuotationLine[]
-  approvals           Approval[]
-  fulfillments        Fulfillment[]
-  invoices            Invoice[]
-  negotiationRequests NegotiationRequest[]
-  dealHealthAlerts    DealHealthAlert[]
+  tenant               Organization          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer             Customer              @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  salesRep             User                  @relation(fields: [salesRepId], references: [id], onDelete: Restrict)
+  items                QuotationItem[]
+  approvals            Approval[]
+  deliveryRequests     DeliveryRequest[]
+  comments             QuoteComment[]
+  changeRequests       QuoteChangeRequest[]
+  negotiationProposals NegotiationProposal[]
+  warehouseAllocations WarehouseAllocation[]
+  subscriptions        Subscription[]
+  invoices             Invoice[]
 
+  @@unique([tenantId, quoteNumber])
+  @@index([tenantId])
+  @@index([tenantId, salesRepId])
+  @@index([tenantId, status])
+  @@index([customerId])
   @@map("quotations")
 }
 
-model QuotationLine {
-  id                 String   @id @default(uuid())
-  quotationId        String   @map("quotation_id")
-  productId          String   @map("product_id")
-  variantId          String?  @map("variant_id")
-  subscriptionPlanId String?  @map("subscription_plan_id")
-  qty                Int      @default(1)
-  unitPrice          Decimal  @map("unit_price") @db.Decimal(12, 2)
-  discountPct        Decimal  @default(0) @map("discount_pct") @db.Decimal(5, 2)
-  categoryLimitPct   Decimal? @map("category_limit_pct") @db.Decimal(5, 2)
-  overagePct         Decimal  @default(0) @map("overage_pct") @db.Decimal(5, 2)
-  isUpsellAdd        Boolean  @default(false) @map("is_upsell_add")
-  marginDelta        Decimal? @map("margin_delta") @db.Decimal(12, 2)
-  createdAt          DateTime @default(now()) @map("created_at")
+// ============================================================
+// QUOTATION ITEMS (Snapshot preservation)
+// ============================================================
 
-  quotation          Quotation           @relation(fields: [quotationId], references: [id], onDelete: Cascade)
-  product            Product             @relation(fields: [productId], references: [id])
-  subscriptionPlan   SubscriptionPlan?   @relation(fields: [subscriptionPlanId], references: [id])
-  fulfillments       Fulfillment[]
-  orderSubscription  OrderSubscription?
-  negotiationRequests NegotiationRequest[]
+model QuotationItem {
+  id                  String      @id @default(uuid())
+  quotationId         String      @map("quotation_id")
+  productId           String      @map("product_id")
+  productNameSnapshot String      @map("product_name_snapshot")
+  productTypeSnapshot ProductType @map("product_type_snapshot")
+  quantity            Int         @default(1)
+  unitPrice           Decimal     @map("unit_price") @db.Decimal(12, 2)
+  costPrice           Decimal     @default(0) @map("cost_price") @db.Decimal(12, 2)
+  discountPercentage  Decimal     @default(0) @map("discount_percentage") @db.Decimal(5, 2)
+  discountAmount      Decimal     @default(0) @map("discount_amount") @db.Decimal(12, 2)
+  taxAmount           Decimal     @default(0) @map("tax_amount") @db.Decimal(12, 2)
+  lineTotal            Decimal               @default(0) @map("line_total") @db.Decimal(12, 2)
+  marginAmount         Decimal               @default(0) @map("margin_amount") @db.Decimal(12, 2)
+  marginPercentage     Decimal               @default(0) @map("margin_percentage") @db.Decimal(5, 2)
+  serviceFulfilled     Boolean               @default(false) @map("service_fulfilled")
+  createdAt            DateTime              @default(now()) @map("created_at")
+  updatedAt            DateTime              @default(now()) @updatedAt @map("updated_at")
 
-  @@map("quotation_lines")
+  quotation            Quotation             @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  product              Product               @relation(fields: [productId], references: [id], onDelete: Restrict)
+  comments             QuoteComment[]
+  changeRequests       QuoteChangeRequest[]
+  negotiationProposals NegotiationProposal[]
+  warehouseAllocations WarehouseAllocation[]
+  subscriptions        Subscription[]
+
+  @@index([quotationId])
+  @@index([productId])
+  @@map("quotation_items")
 }
 
 // ============================================================
-// APPROVALS & AUDIT
+// AUDIT LOGS (Append-only)
 // ============================================================
-
-model Approval {
-  id           String            @id @default(uuid())
-  quotationId  String            @map("quotation_id")
-  level        ApprovalLevelType
-  assignedTo   String?           @map("assigned_to")
-  decision     ApprovalDecision  @default(pending)
-  reason       String?
-  decidedAt    DateTime?         @map("decided_at")
-  createdAt    DateTime          @default(now()) @map("created_at")
-
-  quotation Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
-  approver  User?     @relation("AssignedApprover", fields: [assignedTo], references: [id])
-
-  @@map("approvals")
-}
 
 model AuditLog {
   id         String   @id @default(uuid())
-  entityType String   @map("entity_type")
-  entityId   String   @map("entity_id")
+  tenantId   String   @map("tenant_id")
   userId     String?  @map("user_id")
   action     String
-  note       String?
+  entityType String   @map("entity_type")
+  entityId   String?  @map("entity_id")
+  metadata   Json?
   createdAt  DateTime @default(now()) @map("created_at")
 
-  user User? @relation(fields: [userId], references: [id])
+  tenant Organization @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   User?        @relation(fields: [userId], references: [id])
 
+  @@index([tenantId])
+  @@index([tenantId, createdAt])
   @@map("audit_logs")
 }
 
 // ============================================================
-// FULFILLMENT
+// APPROVALS (Workflow History & Decisions)
 // ============================================================
 
-model Fulfillment {
-  id               String   @id @default(uuid())
-  quotationId      String   @map("quotation_id")
-  quotationLineId  String   @map("quotation_line_id")
-  warehouseId      String   @map("warehouse_id")
-  qtyFulfilled     Int      @map("qty_fulfilled")
-  isBackorder      Boolean  @default(false) @map("is_backorder")
-  isManualOverride Boolean  @default(false) @map("is_manual_override")
-  estimatedCost    Decimal? @map("estimated_cost") @db.Decimal(12, 2)
-  createdAt        DateTime @default(now()) @map("created_at")
+model Approval {
+  id                         String         @id @default(uuid())
+  tenantId                   String         @map("tenant_id")
+  quotationId                String         @map("quotation_id")
+  approverId                 String?        @map("approver_id")
+  approverRole               String         @map("approver_role") // SALES_MANAGER, FINANCE_OPERATIONS
+  level                      String         @default("SALES_MANAGER")
+  status                     ApprovalStatus @default(PENDING_MANAGER)
+  reason                     String?
+  comment                    String?
+  riskScoreAtDecision        Int?           @map("risk_score_at_decision")
+  marginPercentageAtDecision Decimal?       @map("margin_percentage_at_decision") @db.Decimal(5, 2)
+  discountAmountAtDecision   Decimal?       @map("discount_amount_at_decision") @db.Decimal(12, 2)
+  createdAt                  DateTime       @default(now()) @map("created_at")
+  updatedAt                  DateTime       @default(now()) @updatedAt @map("updated_at")
+  actedAt                    DateTime?      @map("acted_at")
 
+  tenant    Organization @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  quotation Quotation    @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  approver  User?        @relation(fields: [approverId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
+  @@index([quotationId])
+  @@index([approverId])
+  @@index([status])
+  @@index([tenantId, status])
+  @@index([createdAt])
+  @@map("approvals")
+}
+
+// ============================================================
+// CUSTOMER DEAL ROOM & NEGOTIATION MODELS
+// ============================================================
+
+model DeliveryRequest {
+  id             String    @id @default(uuid())
+  tenantId       String    @map("tenant_id")
+  quotationId    String    @map("quotation_id")
+  customerId     String    @map("customer_id")
+  requestedDate  DateTime  @map("requested_date")
+  note           String?
+  status         String    @default("REQUESTED") // REQUESTED, ACCEPTED, DECLINED, COUNTER_PROPOSED
+  sellerResponse String?   @map("seller_response")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  quotation Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  customer  Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([quotationId])
+  @@index([customerId])
+  @@map("delivery_requests")
+}
+
+model QuoteComment {
+  id              String    @id @default(uuid())
+  tenantId        String    @map("tenant_id")
+  quotationId     String    @map("quotation_id")
+  quotationItemId String?   @map("quotation_item_id")
+  authorRole      String    @map("author_role") // CUSTOMER, SALES_REP, SALES_MANAGER
+  authorName      String    @map("author_name")
+  customerId      String?   @map("customer_id")
+  userId          String?   @map("user_id")
+  message         String
+  visibility      String    @default("CUSTOMER_VISIBLE") // CUSTOMER_VISIBLE, INTERNAL_ONLY
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  quotation     Quotation      @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  quotationItem QuotationItem? @relation(fields: [quotationItemId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
+  @@index([quotationId])
+  @@index([quotationItemId])
+  @@map("quote_comments")
+}
+
+model QuoteChangeRequest {
+  id              String    @id @default(uuid())
+  tenantId        String    @map("tenant_id")
+  quotationId     String    @map("quotation_id")
+  quotationItemId String?   @map("quotation_item_id")
+  customerId      String    @map("customer_id")
+  requestType     String    @map("request_type") // QUANTITY_CHANGE, PRODUCT_CHANGE, REMOVE_ITEM, ADD_ITEM, DELIVERY_DATE, DISCOUNT_REQUEST, GENERAL_CHANGE
+  currentValue    String?   @map("current_value")
+  requestedValue  String    @map("requested_value")
+  comment         String?
+  status          String    @default("CUSTOMER_SUBMITTED") // CUSTOMER_SUBMITTED, SELLER_REVIEWING, ACCEPTED, REJECTED, COUNTER_PROPOSED
+  sellerResponse  String?   @map("seller_response")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  quotation     Quotation      @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  quotationItem QuotationItem? @relation(fields: [quotationItemId], references: [id], onDelete: SetNull)
+  customer      Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([quotationId])
+  @@index([customerId])
+  @@map("quote_change_requests")
+}
+
+model NegotiationProposal {
+  id                  String    @id @default(uuid())
+  tenantId            String    @map("tenant_id")
+  quotationId         String    @map("quotation_id")
+  quotationItemId     String?   @map("quotation_item_id")
+  customerId          String    @map("customer_id")
+  roundNumber         Int       @default(1) @map("round_number")
+  currentDiscount     Decimal   @map("current_discount") @db.Decimal(5, 2)
+  proposedDiscount    Decimal   @map("proposed_discount") @db.Decimal(5, 2)
+  proposedTotalAmount Decimal?  @map("proposed_total_amount") @db.Decimal(12, 2)
+  reason              String?
+  status              String    @default("CUSTOMER_SUBMITTED") // CUSTOMER_SUBMITTED, SELLER_REVIEWING, APPROVED, REJECTED, ACCEPTED
+  sellerResponse      String?   @map("seller_response")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  quotation     Quotation      @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  quotationItem QuotationItem? @relation(fields: [quotationItemId], references: [id], onDelete: SetNull)
+  customer      Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([quotationId])
+  @@index([customerId])
+  @@map("negotiation_proposals")
+}
+
+model CustomerNotification {
+  id         String   @id @default(uuid())
+  tenantId   String   @map("tenant_id")
+  customerId String   @map("customer_id")
+  title      String
+  message    String
+  link       String?
+  isRead     Boolean  @default(false) @map("is_read")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([customerId])
+  @@map("customer_notifications")
+}
+
+// ============================================================
+// FINANCE & OPERATIONS MODULE MODELS
+// ============================================================
+
+model Warehouse {
+  id        String   @id @default(uuid())
+  tenantId  String   @map("tenant_id")
+  name      String
+  code      String
+  location  String
+  address   String?
+  priority  Int      @default(1)
+  status    String   @default("ACTIVE")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+
+  tenant      Organization          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  inventories Inventory[]
+  allocations WarehouseAllocation[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+  @@map("warehouses")
+}
+
+model Inventory {
+  id                String   @id @default(uuid())
+  tenantId          String   @map("tenant_id")
+  warehouseId       String   @map("warehouse_id")
+  productId         String   @map("product_id")
+  availableQuantity Int      @default(0) @map("available_quantity")
+  reservedQuantity  Int      @default(0) @map("reserved_quantity")
+  allocatedQuantity Int      @default(0) @map("allocated_quantity")
+  fulfilledQuantity Int      @default(0) @map("fulfilled_quantity")
+  updatedAt         DateTime @default(now()) @updatedAt @map("updated_at")
+
+  tenant    Organization @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  warehouse Warehouse    @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  product   Product      @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@unique([warehouseId, productId])
+  @@index([tenantId])
+  @@index([tenantId, warehouseId, productId])
+  @@map("inventories")
+}
+
+model WarehouseAllocation {
+  id                String   @id @default(uuid())
+  tenantId          String   @map("tenant_id")
+  quotationId       String   @map("quotation_id")
+  quotationItemId   String   @map("quotation_item_id")
+  warehouseId       String   @map("warehouse_id")
+  productId         String   @map("product_id")
+  allocatedQuantity Int      @map("allocated_quantity")
+  fulfilledQuantity Int      @default(0) @map("fulfilled_quantity")
+  status            String   @default("ALLOCATED") // ALLOCATED, PARTIALLY_FULFILLED, FULFILLED, CANCELLED
+  trackingNumber    String?  @map("tracking_number")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @default(now()) @updatedAt @map("updated_at")
+
+  tenant        Organization  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   quotation     Quotation     @relation(fields: [quotationId], references: [id], onDelete: Cascade)
-  quotationLine QuotationLine @relation(fields: [quotationLineId], references: [id], onDelete: Cascade)
-  warehouse     Warehouse     @relation(fields: [warehouseId], references: [id])
+  quotationItem QuotationItem @relation(fields: [quotationItemId], references: [id], onDelete: Cascade)
+  warehouse     Warehouse     @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  product       Product       @relation(fields: [productId], references: [id], onDelete: Restrict)
 
-  @@map("fulfillments")
+  @@index([tenantId])
+  @@index([tenantId, quotationId])
+  @@index([warehouseId])
+  @@index([productId])
+  @@map("warehouse_allocations")
 }
 
-// ============================================================
-// BILLING / SUBSCRIPTIONS ON AN ORDER
-// ============================================================
+model Subscription {
+  id                 String    @id @default(uuid())
+  tenantId           String    @map("tenant_id")
+  quotationId        String    @map("quotation_id")
+  customerId         String    @map("customer_id")
+  quotationItemId    String    @map("quotation_item_id")
+  productId          String    @map("product_id")
+  status             String    @default("ACTIVE") // ACTIVE, PAUSED, CANCELLED, EXPIRED
+  quantity           Int       @default(1)
+  recurringUnitPrice Decimal   @map("recurring_unit_price") @db.Decimal(12, 2)
+  recurringTotal     Decimal   @map("recurring_total") @db.Decimal(12, 2)
+  billingFrequency   String    @default("MONTHLY") @map("billing_frequency") // MONTHLY, YEARLY
+  startDate          DateTime  @default(now()) @map("start_date")
+  nextBillingDate    DateTime  @map("next_billing_date")
+  endDate            DateTime? @map("end_date")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at")
 
-model OrderSubscription {
-  id                 String              @id @default(uuid())
-  quotationLineId    String              @unique @map("quotation_line_id")
-  subscriptionPlanId String              @map("subscription_plan_id")
-  status             SubscriptionStatus  @default(active)
-  nextBillDate       DateTime            @map("next_bill_date") @db.Date
-  createdAt          DateTime            @default(now()) @map("created_at")
+  tenant        Organization  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  quotation     Quotation     @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  customer      Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  quotationItem QuotationItem @relation(fields: [quotationItemId], references: [id], onDelete: Cascade)
+  product       Product       @relation(fields: [productId], references: [id], onDelete: Restrict)
+  invoices      Invoice[]
 
-  quotationLine    QuotationLine      @relation(fields: [quotationLineId], references: [id], onDelete: Cascade)
-  subscriptionPlan SubscriptionPlan   @relation(fields: [subscriptionPlanId], references: [id])
-  prorationEvents  ProrationEvent[]
-
-  @@map("order_subscriptions")
+  @@unique([quotationId, quotationItemId])
+  @@index([tenantId])
+  @@index([tenantId, customerId])
+  @@index([tenantId, status])
+  @@index([tenantId, nextBillingDate])
+  @@map("subscriptions")
 }
-
-model ProrationEvent {
-  id                  String   @id @default(uuid())
-  orderSubscriptionId String   @map("order_subscription_id")
-  changeType          String   @map("change_type")
-  oldQty              Int?     @map("old_qty")
-  newQty              Int?     @map("new_qty")
-  proratedAmount      Decimal  @map("prorated_amount") @db.Decimal(12, 2)
-  createdAt           DateTime @default(now()) @map("created_at")
-
-  orderSubscription OrderSubscription @relation(fields: [orderSubscriptionId], references: [id], onDelete: Cascade)
-
-  @@map("proration_events")
-}
-
-// ============================================================
-// INVOICES
-// ============================================================
 
 model Invoice {
-  id          String        @id @default(uuid())
-  code        String        @unique
-  quotationId String        @map("quotation_id")
-  amount      Decimal       @db.Decimal(12, 2)
-  status      InvoiceStatus @default(unpaid)
-  dueDate     DateTime?     @map("due_date") @db.Date
-  paidAt      DateTime?     @map("paid_at")
-  createdAt   DateTime      @default(now()) @map("created_at")
+  id                 String    @id @default(uuid())
+  tenantId           String    @map("tenant_id")
+  invoiceNumber      String    @map("invoice_number")
+  quotationId        String?   @map("quotation_id")
+  customerId         String    @map("customer_id")
+  subscriptionId     String?   @map("subscription_id")
+  invoiceType        String    @default("ONE_TIME") @map("invoice_type") // ONE_TIME, RECURRING
+  status             String    @default("ISSUED") // DRAFT, ISSUED, PARTIALLY_PAID, PAID, VOID
+  subtotal           Decimal   @default(0) @db.Decimal(12, 2)
+  discountAmount     Decimal   @default(0) @map("discount_amount") @db.Decimal(12, 2)
+  taxAmount          Decimal   @default(0) @map("tax_amount") @db.Decimal(12, 2)
+  totalAmount        Decimal   @default(0) @map("total_amount") @db.Decimal(12, 2)
+  amountPaid         Decimal   @default(0) @map("amount_paid") @db.Decimal(12, 2)
+  amountDue          Decimal   @default(0) @map("amount_due") @db.Decimal(12, 2)
+  issueDate          DateTime  @default(now()) @map("issue_date")
+  dueDate            DateTime  @map("due_date")
+  currency           String    @default("INR")
+  billingPeriodStart DateTime? @map("billing_period_start")
+  billingPeriodEnd   DateTime? @map("billing_period_end")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at")
 
-  quotation Quotation     @relation(fields: [quotationId], references: [id])
-  lines     InvoiceLine[]
+  tenant       Organization  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  quotation    Quotation?    @relation(fields: [quotationId], references: [id], onDelete: SetNull)
+  customer     Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  subscription Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+  items        InvoiceItem[]
+  payments     Payment[]
 
+  @@unique([tenantId, invoiceNumber])
+  @@index([tenantId])
+  @@index([tenantId, quotationId])
+  @@index([tenantId, customerId])
+  @@index([tenantId, status])
   @@map("invoices")
 }
 
-model InvoiceLine {
-  id              String  @id @default(uuid())
-  invoiceId       String  @map("invoice_id")
-  quotationLineId String? @map("quotation_line_id")
-  lineType        String  @map("line_type")
-  description     String
-  amount          Decimal @db.Decimal(12, 2)
+model InvoiceItem {
+  id                 String    @id @default(uuid())
+  tenantId           String    @map("tenant_id")
+  invoiceId          String    @map("invoice_id")
+  quotationItemId    String?   @map("quotation_item_id")
+  productId          String    @map("product_id")
+  description        String
+  quantity           Int       @default(1)
+  unitPrice          Decimal   @map("unit_price") @db.Decimal(12, 2)
+  discountAmount     Decimal   @default(0) @map("discount_amount") @db.Decimal(12, 2)
+  taxAmount          Decimal   @default(0) @map("tax_amount") @db.Decimal(12, 2)
+  lineTotal          Decimal   @default(0) @map("line_total") @db.Decimal(12, 2)
+  billingType        String    @default("ONE_TIME") @map("billing_type") // ONE_TIME, RECURRING
+  servicePeriodStart DateTime? @map("service_period_start")
+  servicePeriodEnd   DateTime? @map("service_period_end")
+  createdAt          DateTime  @default(now()) @map("created_at")
 
-  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  tenant  Organization @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  invoice Invoice      @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  product Product      @relation(fields: [productId], references: [id], onDelete: Restrict)
 
-  @@map("invoice_lines")
+  @@index([tenantId])
+  @@index([invoiceId])
+  @@map("invoice_items")
 }
 
-// ============================================================
-// CUSTOMER NEGOTIATION
-// ============================================================
+model Payment {
+  id                   String   @id @default(uuid())
+  tenantId             String   @map("tenant_id")
+  invoiceId            String   @map("invoice_id")
+  customerId           String   @map("customer_id")
+  amount               Decimal  @db.Decimal(12, 2)
+  currency             String   @default("INR")
+  status               String   @default("SUCCESS") // PENDING, SUCCESS, FAILED, REFUNDED
+  paymentMethod        String   @default("SIMULATED") @map("payment_method") // SIMULATED, CARD, BANK_TRANSFER, UPI
+  transactionReference String   @map("transaction_reference")
+  paidAt               DateTime @default(now()) @map("paid_at")
+  createdAt            DateTime @default(now()) @map("created_at")
 
-model NegotiationRequest {
-  id                     String   @id @default(uuid())
-  quotationId            String   @map("quotation_id")
-  quotationLineId        String?  @map("quotation_line_id")
-  customerComment        String?  @map("customer_comment")
-  counterDiscountPct     Decimal? @map("counter_discount_pct") @db.Decimal(5, 2)
-  requestedDeliveryDate  DateTime? @map("requested_delivery_date") @db.Date
-  status                 String   @default("open")
-  createdAt              DateTime @default(now()) @map("created_at")
+  tenant   Organization @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  invoice  Invoice      @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  customer Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
 
-  quotation     Quotation      @relation(fields: [quotationId], references: [id], onDelete: Cascade)
-  quotationLine QuotationLine? @relation(fields: [quotationLineId], references: [id])
-
-  @@map("negotiation_requests")
+  @@unique([tenantId, transactionReference])
+  @@index([tenantId])
+  @@index([tenantId, invoiceId])
+  @@map("payments")
 }
 
-// ============================================================
-// DEAL HEALTH
-// ============================================================
 
-model DealHealthAlert {
-  id          String    @id @default(uuid())
-  quotationId String    @map("quotation_id")
-  alertType   AlertType @map("alert_type")
-  detail      String
-  flaggedAt   DateTime  @default(now()) @map("flagged_at")
-  actionTaken String?   @map("action_taken")
-  resolvedAt  DateTime? @map("resolved_at")
-
-  quotation Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
-
-  @@map("deal_health_alerts")
-}

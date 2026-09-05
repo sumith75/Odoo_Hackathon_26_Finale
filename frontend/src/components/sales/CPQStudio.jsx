@@ -107,8 +107,11 @@ export default function CPQStudio({ editingQuoteId, onSaved, onSubmitted, onCanc
 
             const mappedItems = (q.items || []).map((it) => ({
               productId: it.productId,
+              variantId: it.variantId || null,
+              variantSnapshot: it.variantSnapshot || null,
               name: it.productNameSnapshot,
               type: it.productTypeSnapshot,
+              sku: it.variantSnapshot?.sku || it.product?.sku || '',
               unitPrice: parseFloat(it.unitPrice),
               costPrice: parseFloat(it.costPrice),
               quantity: it.quantity,
@@ -140,8 +143,10 @@ export default function CPQStudio({ editingQuoteId, onSaved, onSubmitted, onCanc
       try {
         const currentCust = customers.find((c) => c.id === custId);
         const payload = {
+          customerId: custId,
           items: currentItems.map((it) => ({
             productId: it.productId,
+            variantId: it.variantId || null,
             name: it.name,
             type: it.type,
             unitPrice: it.unitPrice,
@@ -177,9 +182,14 @@ export default function CPQStudio({ editingQuoteId, onSaved, onSubmitted, onCanc
   }, [items, selectedCustomerId]);
 
   // ── 3. Line Items Handlers ────────────────────────────────────────────────
-  const handleAddProduct = (product) => {
-    // Check if already added
-    const existingIndex = items.findIndex((i) => i.productId === product.id);
+  const handleAddProduct = (product, variant = null) => {
+    // Check if already added (matching product + variant)
+    const existingIndex = items.findIndex((i) =>
+      variant
+        ? i.productId === product.id && i.variantId === variant.id
+        : i.productId === product.id && !i.variantId
+    );
+
     if (existingIndex >= 0) {
       const updated = [...items];
       updated[existingIndex].quantity += 1;
@@ -187,11 +197,23 @@ export default function CPQStudio({ editingQuoteId, onSaved, onSubmitted, onCanc
     } else {
       const newItem = {
         productId: product.id,
-        name: product.name,
-        sku: product.sku,
+        variantId: variant ? variant.id : null,
+        variantSnapshot: variant
+          ? {
+              id: variant.id,
+              name: variant.name,
+              sku: variant.sku,
+              attributes: variant.attributes,
+              stockQuantity: variant.stockQuantity,
+            }
+          : null,
+        name: variant
+          ? `${product.name} (${variant.name})`
+          : product.name,
+        sku: variant ? variant.sku : product.sku,
         type: product.type,
-        unitPrice: parseFloat(product.unitPrice),
-        costPrice: parseFloat(product.costPrice || 0),
+        unitPrice: variant ? parseFloat(variant.unitPrice) : parseFloat(product.unitPrice),
+        costPrice: variant ? parseFloat(variant.costPrice || 0) : parseFloat(product.costPrice || 0),
         taxRate: parseFloat(product.taxRate || 18),
         quantity: 1,
         discountPercentage: 0,
@@ -237,6 +259,7 @@ export default function CPQStudio({ editingQuoteId, onSaved, onSubmitted, onCanc
         notes,
         items: items.map((it) => ({
           productId: it.productId,
+          variantId: it.variantId || null,
           quantity: it.quantity,
           discountPercentage: it.discountPercentage,
         })),
@@ -295,6 +318,7 @@ export default function CPQStudio({ editingQuoteId, onSaved, onSubmitted, onCanc
         notes,
         items: items.map((it) => ({
           productId: it.productId,
+          variantId: it.variantId || null,
           quantity: it.quantity,
           discountPercentage: it.discountPercentage,
         })),
@@ -439,7 +463,15 @@ export default function CPQStudio({ editingQuoteId, onSaved, onSubmitted, onCanc
                 <Building2 size={15} className="text-green-700" /> Target Customer
               </label>
               {selectedCustomer && (
-                <span className="text-xs font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                <span
+                  className={`text-xs font-bold px-2.5 py-0.5 rounded border ${
+                    selectedCustomer.tier === 'GOLD'
+                      ? 'bg-amber-100 text-amber-900 border-amber-300'
+                      : selectedCustomer.tier === 'SILVER'
+                      ? 'bg-slate-200 text-slate-800 border-slate-300'
+                      : 'bg-orange-100 text-orange-900 border-orange-300'
+                  }`}
+                >
                   {selectedCustomer.tier} Tier Account
                 </span>
               )}
@@ -537,9 +569,27 @@ export default function CPQStudio({ editingQuoteId, onSaved, onSubmitted, onCanc
                         <tr key={index} className="hover:bg-slate-50/70 transition-colors">
                           <td className="py-3 px-3">
                             <div className="font-bold text-slate-900">{item.name}</div>
-                            {item.sku && (
-                              <span className="text-[10px] text-slate-400 font-mono">{item.sku}</span>
-                            )}
+                            <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
+                              {item.sku && (
+                                <span className="text-[10px] text-slate-400 font-mono">{item.sku}</span>
+                              )}
+                              {item.variantSnapshot && (
+                                <span className="text-[10px] font-semibold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-200">
+                                  Variant: {Object.entries(item.variantSnapshot.attributes || {}).map(([k, v]) => `${k}: ${v}`).join(' | ') || item.variantSnapshot.name}
+                                </span>
+                              )}
+                              {item.variantSnapshot?.stockQuantity !== undefined && (
+                                <span
+                                  className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${
+                                    item.variantSnapshot.stockQuantity > 0
+                                      ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                                      : 'bg-red-50 text-red-700 border-red-200'
+                                  }`}
+                                >
+                                  {item.variantSnapshot.stockQuantity} in DB
+                                </span>
+                              )}
+                            </div>
                           </td>
 
                           <td className="py-3 px-3">
@@ -881,38 +931,113 @@ export default function CPQStudio({ editingQuoteId, onSaved, onSubmitted, onCanc
                     label: product.type,
                     badge: 'bg-gray-100 text-gray-700',
                   };
+                  const hasVariants = product.variants && product.variants.length > 0;
                   return (
                     <div
                       key={product.id}
-                      className="py-3 flex items-center justify-between hover:bg-slate-50 px-2 rounded-lg transition-colors"
+                      className="py-3 px-2 rounded-lg transition-colors hover:bg-slate-50/80 space-y-2.5"
                     >
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-bold text-slate-900 text-sm">{product.name}</span>
-                          <span
-                            className={`text-[10px] font-bold px-2 py-0.5 rounded border ${typeCfg.badge}`}
-                          >
-                            {typeCfg.label}
-                          </span>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-slate-900 text-sm">{product.name}</span>
+                            <span
+                              className={`text-[10px] font-bold px-2 py-0.5 rounded border ${typeCfg.badge}`}
+                            >
+                              {typeCfg.label}
+                            </span>
+                            {hasVariants && (
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200">
+                                {product.variants.length} Variants Available
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-xs text-slate-500 mt-0.5">
+                            <span className="font-mono text-slate-400">{product.sku}</span>
+                            {product.billingType === 'RECURRING' && ' • Recurring Monthly'}
+                          </div>
                         </div>
-                        <div className="text-xs text-slate-500 mt-0.5">
-                          <span className="font-mono text-slate-400">{product.sku}</span>
-                          {product.billingType === 'RECURRING' && ' • Recurring Monthly'}
-                        </div>
+
+                        {!hasVariants && (
+                          <div className="flex items-center gap-4">
+                            <span className="font-mono font-bold text-slate-900 text-sm">
+                              {currency} {Number(product.unitPrice).toLocaleString()}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleAddProduct(product)}
+                              className="px-3 py-1.5 bg-green-700 hover:bg-green-800 text-white rounded-lg text-xs font-bold transition-colors shadow-xs"
+                            >
+                              + Select
+                            </button>
+                          </div>
+                        )}
                       </div>
 
-                      <div className="flex items-center gap-4">
-                        <span className="font-mono font-bold text-slate-900 text-sm">
-                          {currency} {Number(product.unitPrice).toLocaleString()}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => handleAddProduct(product)}
-                          className="px-3 py-1.5 bg-green-700 hover:bg-green-800 text-white rounded-lg text-xs font-bold transition-colors shadow-xs"
-                        >
-                          + Select
-                        </button>
-                      </div>
+                      {/* Variant Selector List if variants exist */}
+                      {hasVariants && (
+                        <div className="bg-slate-50 border border-slate-200 rounded-lg p-2.5 space-y-2">
+                          <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500 flex items-center justify-between">
+                            <span>Select Specific Variant:</span>
+                            <span className="text-[10px] text-slate-400 font-normal">Authoritative DB Stock</span>
+                          </div>
+
+                          <div className="grid grid-cols-1 gap-1.5">
+                            {product.variants.map((variant) => {
+                              const attrEntries = Object.entries(variant.attributes || {});
+                              return (
+                                <div
+                                  key={variant.id}
+                                  className="bg-white border border-slate-200 hover:border-indigo-300 p-2 rounded-lg flex items-center justify-between gap-3 text-xs transition-colors shadow-2xs"
+                                >
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2">
+                                      <span className="font-bold text-slate-800 truncate">{variant.name}</span>
+                                      <span className="font-mono text-[10px] text-slate-400">{variant.sku}</span>
+                                    </div>
+                                    <div className="flex flex-wrap gap-1 mt-1">
+                                      {attrEntries.map(([k, v], i) => (
+                                        <span
+                                          key={i}
+                                          className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.2 rounded border border-slate-200"
+                                        >
+                                          {k}: <strong>{v}</strong>
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </div>
+
+                                  <div className="flex items-center gap-3 flex-shrink-0">
+                                    <span
+                                      className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
+                                        variant.stockQuantity > 0
+                                          ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                                          : 'bg-red-50 text-red-700 border-red-200'
+                                      }`}
+                                    >
+                                      {variant.stockQuantity > 0
+                                        ? `${variant.stockQuantity} in stock (DB)`
+                                        : 'Out of stock (DB)'}
+                                    </span>
+
+                                    <span className="font-mono font-bold text-slate-900 text-xs">
+                                      {currency} {Number(variant.unitPrice).toLocaleString()}
+                                    </span>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => handleAddProduct(product, variant)}
+                                      className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-xs font-bold transition-colors shadow-2xs"
+                                    >
+                                      + Pick Variant
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   );
                 })}

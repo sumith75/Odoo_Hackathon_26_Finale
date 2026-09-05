@@ -31,14 +31,18 @@ export default function MyDealsView({ onOpenCPQForEdit, onNavigateToNewQuote, on
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [riskFilter, setRiskFilter] = useState('ALL');
+  const [page, setPage] = useState(1);
+  const [pagination, setPagination] = useState({ page: 1, limit: 25, totalCount: 0, totalPages: 1 });
 
   const currency = user?.currency || 'INR';
 
-  const loadQuotes = async () => {
+  const loadQuotes = async (pageOverride = null) => {
     setLoading(true);
     try {
-      let query = '';
+      const activePage = pageOverride !== null ? pageOverride : page;
       const params = new URLSearchParams();
+      params.append('page', activePage);
+      params.append('limit', '25');
       if (statusFilter !== 'ALL') params.append('status', statusFilter);
       if (riskFilter !== 'ALL') params.append('riskLevel', riskFilter);
       if (searchTerm) params.append('search', searchTerm);
@@ -47,6 +51,9 @@ export default function MyDealsView({ onOpenCPQForEdit, onNavigateToNewQuote, on
       const res = await fetchWithAuth(`/api/quotations/my${qs ? `?${qs}` : ''}`);
       if (res.success) {
         setQuotes(res.data);
+        if (res.pagination) {
+          setPagination(res.pagination);
+        }
       }
     } catch (err) {
       console.error('Failed to load deals', err);
@@ -56,12 +63,21 @@ export default function MyDealsView({ onOpenCPQForEdit, onNavigateToNewQuote, on
   };
 
   useEffect(() => {
-    loadQuotes();
+    setPage(1);
+    loadQuotes(1);
   }, [statusFilter, riskFilter]);
 
   const handleSearchSubmit = (e) => {
     e.preventDefault();
-    loadQuotes();
+    setPage(1);
+    loadQuotes(1);
+  };
+
+  const handlePageChange = (newPage) => {
+    if (newPage >= 1 && newPage <= pagination.totalPages) {
+      setPage(newPage);
+      loadQuotes(newPage);
+    }
   };
 
   return (
@@ -156,7 +172,8 @@ export default function MyDealsView({ onOpenCPQForEdit, onNavigateToNewQuote, on
             </button>
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <>
+            <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-slate-50 border-b border-slate-200 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
@@ -264,7 +281,47 @@ export default function MyDealsView({ onOpenCPQForEdit, onNavigateToNewQuote, on
               </tbody>
             </table>
           </div>
-        )}
+
+          {/* Pagination Footer */}
+          {pagination.totalCount > 0 && (
+            <div className="px-4 py-3 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500">
+              <div>
+                Showing{' '}
+                <span className="font-bold text-slate-800">
+                  {Math.min((pagination.page - 1) * pagination.limit + 1, pagination.totalCount)}
+                </span>{' '}
+                to{' '}
+                <span className="font-bold text-slate-800">
+                  {Math.min(pagination.page * pagination.limit, pagination.totalCount)}
+                </span>{' '}
+                of <span className="font-bold text-slate-800">{pagination.totalCount}</span> quotations
+              </div>
+
+              {pagination.totalPages > 1 && (
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => handlePageChange(pagination.page - 1)}
+                    disabled={pagination.page <= 1}
+                    className="px-3 py-1 bg-white border border-slate-200 rounded text-slate-700 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed font-medium transition-colors"
+                  >
+                    Previous
+                  </button>
+                  <span className="px-2 font-semibold text-slate-700">
+                    Page {pagination.page} of {pagination.totalPages}
+                  </span>
+                  <button
+                    onClick={() => handlePageChange(pagination.page + 1)}
+                    disabled={pagination.page >= pagination.totalPages}
+                    className="px-3 py-1 bg-white border border-slate-200 rounded text-slate-700 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed font-medium transition-colors"
+                  >
+                    Next
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </>
+      )}
       </div>
     </div>
   );

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { fetchWithAuth } from '../../utils/api';
+import { useAuth } from '../../context/AuthContext';
 import {
   Receipt,
   ArrowLeft,
@@ -15,7 +16,9 @@ import {
 } from 'lucide-react';
 
 export default function InvoiceDetail({ invoiceId, onBack }) {
+  const { user } = useAuth();
   const [invoice, setInvoice] = useState(null);
+  const [orgData, setOrgData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -47,8 +50,16 @@ export default function InvoiceDetail({ invoiceId, onBack }) {
     }
   };
 
+  const fetchOrg = async () => {
+    try {
+      const res = await fetchWithAuth('/api/organization');
+      if (res.success) setOrgData(res.data);
+    } catch {}
+  };
+
   useEffect(() => {
     fetchInvoice();
+    fetchOrg();
   }, [invoiceId]);
 
   const handleSimulatePayment = async (e) => {
@@ -149,9 +160,9 @@ export default function InvoiceDetail({ invoiceId, onBack }) {
               <span className="font-extrabold text-slate-900 text-lg tracking-tight">DealFlow360</span>
             </div>
             <p className="text-xs text-slate-500 mt-2">
-              TechWorld Solutions Pvt Ltd<br />
-              Cyber Towers, Hitec City, Hyderabad, India<br />
-              contact@techworld.com
+              {orgData?.name || user?.organizationName || 'Your Organization'}
+              {orgData?.address && <><br />{orgData.address}</>}
+              {orgData?.companyEmail && <><br />{orgData.companyEmail}</>}
             </p>
           </div>
 

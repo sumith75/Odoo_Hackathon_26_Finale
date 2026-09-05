@@ -255,30 +255,9 @@ function RegisterCustomerForm({ onBack }) {
     email: '',
     password: '',
     companyName: '',
-    tenantId: '',
   });
-  const [organizations, setOrganizations] = useState([]);
-  const [loadingOrgs, setLoadingOrgs] = useState(true);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    const fetchOrgs = async () => {
-      try {
-        const res = await fetch('/api/auth/organizations');
-        const data = await res.json();
-        if (data.success && Array.isArray(data.data) && data.data.length > 0) {
-          setOrganizations(data.data);
-          setForm((prev) => ({ ...prev, tenantId: data.data[0].id }));
-        }
-      } catch (err) {
-        console.error('Failed to load organizations:', err);
-      } finally {
-        setLoadingOrgs(false);
-      }
-    };
-    fetchOrgs();
-  }, []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -322,7 +301,7 @@ function RegisterCustomerForm({ onBack }) {
         />
 
         <Field
-          label="Work / Personal Email"
+          label="Work / Business Email"
           type="email"
           value={form.email}
           onChange={(v) => setForm({ ...form, email: v })}
@@ -344,32 +323,10 @@ function RegisterCustomerForm({ onBack }) {
           label="Company / Business Name"
           value={form.companyName}
           onChange={(v) => setForm({ ...form, companyName: v })}
-          placeholder="Acme Corporation (or your name)"
+          placeholder="Acme Corporation"
+          required
+          helperText="Your organization name — appears on quotations and invoices"
         />
-
-        <div>
-          <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-            Vendor / Organization Provider <span className="text-red-500">*</span>
-          </label>
-          <select
-            value={form.tenantId}
-            onChange={(e) => setForm({ ...form, tenantId: e.target.value })}
-            className="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-green-600/30 focus:border-green-600"
-            disabled={loadingOrgs}
-          >
-            {organizations.map((org) => (
-              <option key={org.id} value={org.id}>
-                {org.name} ({org.industry || 'Technology'} • {org.currency || 'INR'})
-              </option>
-            ))}
-            {organizations.length === 0 && (
-              <option value="">TechWorld Solutions (Default)</option>
-            )}
-          </select>
-          <p className="text-[11px] text-slate-400 mt-1">
-            Select the vendor company you are requesting quotes and purchasing from
-          </p>
-        </div>
 
         {error && (
           <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg p-3">
@@ -383,9 +340,17 @@ function RegisterCustomerForm({ onBack }) {
           className="w-full py-2.5 bg-green-700 hover:bg-green-800 text-white rounded-lg text-sm font-semibold flex items-center justify-center gap-2 transition-colors shadow-xs disabled:opacity-60 cursor-pointer"
         >
           {loading && <Loader2 size={16} className="animate-spin" />}
-          {loading ? 'Creating Account...' : 'Complete Customer Sign Up'}
+          {loading ? 'Creating Account...' : 'Create Customer Account'}
         </button>
       </form>
+
+      <div className="mt-4 p-3 bg-slate-50 border border-slate-200 rounded-lg">
+        <p className="text-[11px] text-slate-500 leading-relaxed">
+          <Sparkles size={11} className="inline text-amber-500 mr-1" />
+          <strong>How it works:</strong> After signing up, your Sales Representative will create a quotation for you. 
+          You'll see it in your Deal Room where you can review, negotiate, and confirm.
+        </p>
+      </div>
 
       <div className="mt-5 text-center text-xs text-slate-500">
         Already have a customer account?{' '}

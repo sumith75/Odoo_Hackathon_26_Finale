@@ -12,6 +12,7 @@ import productRoutes from './modules/products/productRoutes.js';
 import discountRuleRoutes from './modules/discountRules/discountRuleRoutes.js';
 import approvalRuleRoutes from './modules/approvalRules/approvalRuleRoutes.js';
 import dashboardRoutes from './modules/adminDashboard/dashboardRoutes.js';
+import warehouseAdminRoutes from './modules/adminDashboard/warehouseRoutes.js';
 
 // Multi-Tenant Sales Rep & CPQ Modules
 import customersRoutes from './modules/customers/customerRoutes.js';
@@ -27,12 +28,7 @@ import customerDealRoomRoutes from './modules/customerDealRoom/customerRoutes.js
 // Multi-Tenant Finance & Operations Module
 import financeRoutes from './modules/finance/financeRoutes.js';
 
-// Legacy / Future Integration Modules
-import quoteRoutes from './routes/quoteRoutes.js';
-import approvalRoutes from './routes/approvalRoutes.js';
-import legacyCustomerRoutes from './routes/customerRoutes.js';
-import executionRoutes from './routes/executionRoutes.js';
-
+// Production Multi-Tenant Routes Only - All backed by Neon PostgreSQL & Prisma
 import { requestCorrelationMiddleware } from './middleware/requestCorrelation.js';
 import { idempotencyMiddleware } from './middleware/idempotency.js';
 
@@ -48,18 +44,51 @@ app.use(requestCorrelationMiddleware);
 app.use(idempotencyMiddleware);
 app.use(morgan('dev'));
 
-// Health & Status endpoint
-app.get('/api/health', (req, res) => {
+import prisma from './db/prisma.js';
+import redis from './config/redis.js';
+import { authRateLimiter } from './middleware/rateLimiter.js';
+
+// ── Liveness Probe (Application running) ────────────────────────────────────
+const livenessHandler = (req, res) => {
   res.json({
-    status: 'online',
-    service: 'DealFlow360 — Multi-Tenant Autonomous Deal Management Engine',
+    status: 'ok',
+    service: 'DealFlow360',
     version: '3.0.0',
-    database: getDbStatus(),
+    uptimeSeconds: Math.floor(process.uptime()),
     timestamp: new Date().toISOString(),
   });
-});
+};
+app.get('/health', livenessHandler);
+app.get('/api/health', livenessHandler);
+
+// ── Readiness Probe (Application ready for traffic: DB & Cache ping) ────────
+const readinessHandler = async (req, res) => {
+  try {
+    // Ping PostgreSQL authoritative source of truth
+    await prisma.$queryRaw`SELECT 1`;
+    const redisAvailable = redis.isAvailable();
+
+    res.json({
+      status: 'ready',
+      database: 'connected',
+      cache: redisAvailable ? 'redis-cluster' : 'in-memory-fallback',
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error('[READINESS ERROR]:', err.message);
+    res.status(503).json({
+      status: 'not_ready',
+      database: 'disconnected',
+      error: 'Primary datastore unreachable',
+      timestamp: new Date().toISOString(),
+    });
+  }
+};
+app.get('/ready', readinessHandler);
+app.get('/api/ready', readinessHandler);
 
 // ── Multi-Tenant Core Routes (Admin Portal & Auth) ──────────────────────────
+app.use('/api/auth/login', authRateLimiter);
 app.use('/api/auth', authRoutes);
 app.use('/api/organization', organizationRoutes);
 app.use('/api/team', teamRoutes);
@@ -67,9 +96,12 @@ app.use('/api/products', productRoutes);
 app.use('/api/discount-rules', discountRuleRoutes);
 app.use('/api/approval-rules', approvalRuleRoutes);
 app.use('/api/admin/dashboard', dashboardRoutes);
+app.use('/api/admin/warehouses', warehouseAdminRoutes);
 app.use('/api/admin', dashboardRoutes);
 app.use('/api/audit', (req, res, next) => {
-  req.url = '/audit';
+  const queryIdx = req.url.indexOf('?');
+  const queryPart = queryIdx !== -1 ? req.url.substring(queryIdx) : '';
+  req.url = '/audit' + queryPart;
   dashboardRoutes(req, res, next);
 });
 
@@ -88,10 +120,9 @@ app.use('/api/customer', customerDealRoomRoutes);
 // ── Multi-Tenant Finance & Operations Module ─────────────────────────────────
 app.use('/api/finance', financeRoutes);
 
-// ── Future Workflows (Preserved for Next Phases) ──────────────────────────
-app.use('/api/quotes', quoteRoutes);
-app.use('/api/customer-legacy', legacyCustomerRoutes);
-app.use('/api/execution', executionRoutes);
+// ── Database-backed Aliases for API Compatibility ────────────────────────
+app.use('/api/quotes', quotationRoutes);
+app.use('/api/customer-legacy', customersRoutes);
 
 // Consistent Global Error Handler (Section 42)
 app.use((err, req, res, next) => {

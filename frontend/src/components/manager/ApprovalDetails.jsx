@@ -69,17 +69,20 @@ export default function ApprovalDetails({ quoteId, onBack, onActionCompleted }) 
     setSubmittingAction(true);
     try {
       let endpoint = `/api/manager/approvals/${quoteId}/`;
-      let body = {};
+      let body = {
+        expectedVersion: data?.quote?.version,
+        version: data?.quote?.version,
+      };
 
       if (activeModal === 'APPROVE') {
         endpoint += 'approve';
-        body = { comment: modalComment };
+        body.comment = modalComment;
       } else if (activeModal === 'REJECT') {
         endpoint += 'reject';
-        body = { reason: modalReason };
+        body.reason = modalReason;
       } else if (activeModal === 'RETURN') {
         endpoint += 'return-for-revision';
-        body = { reason: modalReason };
+        body.reason = modalReason;
       }
 
       const res = await fetchWithAuth(endpoint, {

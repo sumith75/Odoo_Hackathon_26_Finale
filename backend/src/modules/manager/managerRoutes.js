@@ -34,7 +34,11 @@ router.use(resolveTenant);
 // GET /api/manager/dashboard
 // Section 6: Real database metrics & KPI cards
 // ─────────────────────────────────────────────────────────────────────────────
-router.get('/dashboard', async (req, res) => {
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/manager/dashboard
+// Section 6 & Requirement 18: Real database metrics & KPI cards
+// ─────────────────────────────────────────────────────────────────────────────
+router.get(['/dashboard', '/approvals/dashboard'], async (req, res) => {
   try {
     const tenantId = req.tenantId;
 
@@ -192,10 +196,10 @@ router.get('/dashboard', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GET /api/manager/approvals
-// Section 7 & 8: Approval Inbox with filtering, search, and sorting
+// GET /api/manager/approvals & GET /api/approvals
+// Section 7 & 8, Requirement 2 & 3: Approval Inbox with server-side pagination, search, filters & sorting
 // ─────────────────────────────────────────────────────────────────────────────
-router.get('/approvals', async (req, res) => {
+router.get(['/', '/approvals'], async (req, res) => {
   try {
     const {
       status = 'PENDING', // PENDING, APPROVED, REJECTED, RETURNED, ALL
@@ -203,6 +207,8 @@ router.get('/approvals', async (req, res) => {
       search,
       salesRepId,
       customerId,
+      startDate,
+      endDate,
       sortBy = 'priority', // priority, risk, value, oldest, newest
       page = 1,
       limit = 25,
@@ -237,6 +243,13 @@ router.get('/approvals', async (req, res) => {
       where.customerId = customerId;
     }
 
+    // Date range filter
+    if (startDate || endDate) {
+      where.createdAt = {};
+      if (startDate) where.createdAt.gte = new Date(startDate);
+      if (endDate) where.createdAt.lte = new Date(endDate);
+    }
+
     // Search filter (Quote Number or Customer Name)
     if (search && search.trim()) {
       const q = search.trim();
@@ -262,7 +275,8 @@ router.get('/approvals', async (req, res) => {
       orderBy = [{ createdAt: 'desc' }];
     }
 
-    const take = Math.max(1, parseInt(limit, 10) || 25);
+    // Server-side pagination with strict 100 max limit (Requirement 2)
+    const take = Math.min(100, Math.max(1, parseInt(limit, 10) || 25));
     const skip = (Math.max(1, parseInt(page, 10) || 1) - 1) * take;
 
     const [total, quotations, discountRules] = await Promise.all([
@@ -320,12 +334,12 @@ router.get('/approvals', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GET /api/manager/approvals/:id
-// Section 9 & 10: Complete Decision-Making Dossier
+// GET /api/manager/approvals/:id & GET /api/approvals/:id
+// Section 9 & 10, Requirement 4: Complete Decision-Making Dossier
 // ─────────────────────────────────────────────────────────────────────────────
-router.get('/approvals/:id', async (req, res) => {
+router.get(['/:id', '/approvals/:id'], async (req, res) => {
   try {
-    const quote = await prisma.quotation.findFirst({
+    let quote = await prisma.quotation.findFirst({
       where: { id: req.params.id, tenantId: req.tenantId },
       include: {
         customer: true,
@@ -339,9 +353,30 @@ router.get('/approvals/:id', async (req, res) => {
     });
 
     if (!quote) {
+      // Check if :id is an approvalId
+      const approvalRecord = await prisma.approval.findFirst({
+        where: { id: req.params.id, tenantId: req.tenantId },
+      });
+      if (approvalRecord) {
+        quote = await prisma.quotation.findFirst({
+          where: { id: approvalRecord.quotationId, tenantId: req.tenantId },
+          include: {
+            customer: true,
+            salesRep: { select: { id: true, name: true, email: true, phone: true } },
+            items: { include: { product: true } },
+            approvals: {
+              orderBy: { createdAt: 'desc' },
+              include: { approver: { select: { id: true, name: true, role: true } } },
+            },
+          },
+        });
+      }
+    }
+
+    if (!quote) {
       return res.status(404).json({
         success: false,
-        error: { code: 'NOT_FOUND', message: 'Quotation not found in organization.' },
+        error: { code: 'NOT_FOUND', message: 'Quotation or approval not found in organization.' },
       });
     }
 
@@ -375,12 +410,12 @@ router.get('/approvals/:id', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// POST /api/manager/approvals/:id/approve
-// Section 15: Sales Manager Approve
+// POST /api/manager/approvals/:id/approve & POST /api/approvals/:id/approve
+// Section 15, Requirement 5 & 6: Sales Manager Approve
 // ─────────────────────────────────────────────────────────────────────────────
-router.post('/approvals/:id/approve', async (req, res) => {
+router.post(['/:id/approve', '/approvals/:id/approve'], async (req, res) => {
   try {
-    const { comment } = req.body;
+    const { comment, version, expectedVersion, revisedItems } = req.body;
     const result = await executeApprovalAction({
       quoteId: req.params.id,
       tenantId: req.tenantId,
@@ -388,6 +423,9 @@ router.post('/approvals/:id/approve', async (req, res) => {
       userRole: req.user.role,
       action: 'APPROVE',
       comment,
+      version,
+      expectedVersion,
+      revisedItems,
     });
 
     res.json({
@@ -407,12 +445,12 @@ router.post('/approvals/:id/approve', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// POST /api/manager/approvals/:id/reject
-// Section 16: Sales Manager Reject (Mandatory reason required)
+// POST /api/manager/approvals/:id/reject & POST /api/approvals/:id/reject
+// Section 16, Requirement 8: Sales Manager Reject (Mandatory reason required)
 // ─────────────────────────────────────────────────────────────────────────────
-router.post('/approvals/:id/reject', async (req, res) => {
+router.post(['/:id/reject', '/approvals/:id/reject'], async (req, res) => {
   try {
-    const { reason } = req.body;
+    const { reason, version, expectedVersion } = req.body;
     const result = await executeApprovalAction({
       quoteId: req.params.id,
       tenantId: req.tenantId,
@@ -420,6 +458,8 @@ router.post('/approvals/:id/reject', async (req, res) => {
       userRole: req.user.role,
       action: 'REJECT',
       reason,
+      version,
+      expectedVersion,
     });
 
     res.json({
@@ -439,36 +479,47 @@ router.post('/approvals/:id/reject', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// POST /api/manager/approvals/:id/return-for-revision
-// Section 17: Sales Manager Return for Revision (Mandatory reason required)
+// POST /api/manager/approvals/:id/return & POST /api/approvals/:id/return
+// Section 17, Requirement 9: Sales Manager Return for Revision (Mandatory reason required)
 // ─────────────────────────────────────────────────────────────────────────────
-router.post('/approvals/:id/return-for-revision', async (req, res) => {
-  try {
-    const { reason } = req.body;
-    const result = await executeApprovalAction({
-      quoteId: req.params.id,
-      tenantId: req.tenantId,
-      userId: req.user.id,
-      userRole: req.user.role,
-      action: 'RETURN_FOR_REVISION',
-      reason,
-    });
+router.post(
+  [
+    '/:id/return',
+    '/:id/return-for-revision',
+    '/approvals/:id/return',
+    '/approvals/:id/return-for-revision',
+  ],
+  async (req, res) => {
+    try {
+      const { reason, version, expectedVersion } = req.body;
+      const result = await executeApprovalAction({
+        quoteId: req.params.id,
+        tenantId: req.tenantId,
+        userId: req.user.id,
+        userRole: req.user.role,
+        action: 'RETURN_FOR_REVISION',
+        reason,
+        version,
+        expectedVersion,
+      });
 
-    res.json({
-      success: true,
-      message: result.responseMessage,
-      data: result.updatedQuote,
-    });
-  } catch (err) {
-    console.error('[MANAGER_RETURN_REVISION] Error:', err);
-    const statusCode = err.statusCode || 500;
-    res.status(statusCode).json({
-      success: false,
-      error: { code: err.code || 'RETURN_ERROR', message: err.message },
-      message: err.message,
-    });
+      res.json({
+        success: true,
+        message: result.responseMessage,
+        data: result.updatedQuote,
+      });
+    } catch (err) {
+      console.error('[MANAGER_RETURN_REVISION] Error:', err);
+      const statusCode = err.statusCode || 500;
+      res.status(statusCode).json({
+        success: false,
+        error: { code: err.code || 'RETURN_ERROR', message: err.message },
+        message: err.message,
+      });
+    }
   }
-});
+);
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/manager/history

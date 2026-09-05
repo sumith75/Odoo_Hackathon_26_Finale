@@ -129,6 +129,27 @@ export default function AdminDashboard({ onNavigate }) {
           </div>
         </div>
 
+        {/* Customer Accounts & Commercial Tiers */}
+        <div
+          onClick={() => onNavigate('customers')}
+          className="bg-white border border-slate-200 hover:border-green-600 p-5 rounded-xl shadow-xs transition-all cursor-pointer group"
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Customer Directory</span>
+            <div className="w-9 h-9 rounded-lg bg-emerald-50 text-green-700 flex items-center justify-center group-hover:bg-green-700 group-hover:text-white transition-colors">
+              <Users size={18} />
+            </div>
+          </div>
+          <div className="mt-3">
+            <span className="text-xl font-black text-slate-900">Commercial Tiers</span>
+          </div>
+          <div className="mt-2 text-xs text-slate-600 flex items-center gap-2">
+            <span className="font-bold text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">GOLD</span>
+            <span className="font-bold text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">SILVER</span>
+            <span className="font-bold text-orange-800 bg-orange-50 px-1.5 py-0.5 rounded border border-orange-200">BRONZE</span>
+          </div>
+        </div>
+
         {/* Product Catalog */}
         <div
           onClick={() => onNavigate('products')}

@@ -94,22 +94,41 @@ router.get(['/', '/dashboard'], async (req, res) => {
   }
 });
 
+import { parsePaginationParams, buildPaginationMeta } from '../../utils/pagination.js';
+
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/audit
-// Section 26: Chronological Audit Activity Stream
+// Section 26: Chronological Audit Activity Stream with Pagination
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/audit', async (req, res) => {
   try {
-    const logs = await prisma.auditLog.findMany({
-      where: { tenantId: req.tenantId },
-      orderBy: { createdAt: 'desc' },
-      take: 50,
-      include: {
-        user: { select: { id: true, name: true, role: true, email: true } },
-      },
-    });
+    const { page, limit, skip, take } = parsePaginationParams(req.query);
 
-    res.json({ success: true, data: logs });
+    const where = { tenantId: req.tenantId };
+    if (req.query.action) {
+      where.action = req.query.action;
+    }
+
+    const effectiveLimit = req.query.limit ? limit : 50;
+
+    const [totalCount, logs] = await Promise.all([
+      prisma.auditLog.count({ where }),
+      prisma.auditLog.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip: req.query.page ? skip : 0,
+        take: effectiveLimit,
+        include: {
+          user: { select: { id: true, name: true, role: true, email: true } },
+        },
+      }),
+    ]);
+
+    res.json({
+      success: true,
+      data: logs,
+      pagination: buildPaginationMeta(totalCount, page, effectiveLimit),
+    });
   } catch (err) {
     console.error('[AUDIT] Fetch error:', err);
     res.status(500).json({

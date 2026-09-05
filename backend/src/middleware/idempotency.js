@@ -1,37 +1,51 @@
-// Production Idempotency Middleware (Point 12)
-// Prevents duplicate charges, duplicate inventory allocations, and double invoice creation.
+// Production Idempotency Middleware (Requirement 9)
+// Prevents duplicate charges, duplicate inventory allocations, and double invoice creation across clustered nodes.
 
-const idempotencyStore = new Map();
+import redis from '../config/redis.js';
+
+const IDEMPOTENCY_TTL_SECONDS = 86400; // 24 hours
 
 /**
- * Idempotency middleware for express
+ * Distributed Idempotency middleware for express
  * Checks 'Idempotency-Key' or 'x-idempotency-key' header
  */
-export function idempotencyMiddleware(req, res, next) {
+export async function idempotencyMiddleware(req, res, next) {
   const key = req.headers['idempotency-key'] || req.headers['x-idempotency-key'];
 
-  if (!key) {
+  if (!key || req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') {
     return next();
   }
 
-  // Check if we already processed this exact key
-  if (idempotencyStore.has(key)) {
-    const cached = idempotencyStore.get(key);
-    res.setHeader('X-Cache', 'HIT-IDEMPOTENCY');
-    res.setHeader('X-Idempotency-Key', key);
-    return res.status(cached.status).json(cached.body);
+  const redisKey = `idempotency:${key}`;
+
+  try {
+    // Check if key has already been processed in distributed cache
+    const cachedData = await redis.get(redisKey);
+    if (cachedData) {
+      const parsed = typeof cachedData === 'string' ? JSON.parse(cachedData) : cachedData;
+      res.setHeader('X-Cache', 'HIT-IDEMPOTENCY');
+      res.setHeader('X-Idempotency-Key', key);
+      return res.status(parsed.status).json(parsed.body);
+    }
+  } catch (err) {
+    // Fall back to processing normally if cache lookup fails
+    console.warn('[IDEMPOTENCY] Cache lookup error:', err.message);
   }
 
   // Intercept response to store result
   const originalJson = res.json.bind(res);
   res.json = (body) => {
-    // Only cache successful or client-side responses (not 5xx errors)
+    // Only cache successful or client-side responses (not 5xx server errors)
     if (res.statusCode < 500) {
-      idempotencyStore.set(key, {
-        status: res.statusCode,
-        body,
-        cachedAt: Date.now()
-      });
+      redis.set(
+        redisKey,
+        JSON.stringify({
+          status: res.statusCode,
+          body,
+          cachedAt: Date.now(),
+        }),
+        IDEMPOTENCY_TTL_SECONDS
+      ).catch((err) => console.warn('[IDEMPOTENCY] Cache write error:', err.message));
     }
     res.setHeader('X-Idempotency-Key', key);
     return originalJson(body);
@@ -40,15 +54,4 @@ export function idempotencyMiddleware(req, res, next) {
   next();
 }
 
-/**
- * Clear expired keys (older than 24 hours)
- */
-setInterval(() => {
-  const now = Date.now();
-  const maxAge = 24 * 60 * 60 * 1000;
-  for (const [key, val] of idempotencyStore.entries()) {
-    if (now - val.cachedAt > maxAge) {
-      idempotencyStore.delete(key);
-    }
-  }
-}, 60 * 60 * 1000);
+export default idempotencyMiddleware;

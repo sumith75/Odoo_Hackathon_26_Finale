@@ -7,11 +7,6 @@ export function requestCorrelationMiddleware(req, res, next) {
   req.requestId = requestId;
   res.setHeader('X-Request-Id', requestId);
 
-  // Extract or set Tenant ID for Multi-Tenancy (Points 18 & 19)
-  const tenantId = req.headers['x-tenant-id'] || 'tenant-default';
-  req.tenantId = tenantId;
-  res.setHeader('X-Tenant-Id', tenantId);
-
   // Measure latency for observability
   const startTime = process.hrtime();
 

@@ -27,29 +27,37 @@ export default function ApprovalInbox({ onSelectQuote }) {
   const [search, setSearch] = useState('');
   const [riskFilter, setRiskFilter] = useState('ALL');
   const [sortBy, setSortBy] = useState('priority');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
 
   const [loading, setLoading] = useState(true);
   const [quotations, setQuotations] = useState([]);
   const [pagination, setPagination] = useState({ total: 0, page: 1, totalPages: 1 });
   const [error, setError] = useState('');
 
-  const loadApprovals = async () => {
+  const loadApprovals = async (pageToLoad = currentPage) => {
     setLoading(true);
     setError('');
     try {
       const queryParams = new URLSearchParams({
         status: statusTab,
         sortBy,
-        page: '1',
-        limit: '50',
+        page: String(pageToLoad),
+        limit: '25',
       });
       if (search.trim()) queryParams.set('search', search.trim());
       if (riskFilter !== 'ALL') queryParams.set('riskLevel', riskFilter);
+      if (startDate) queryParams.set('startDate', startDate);
+      if (endDate) queryParams.set('endDate', endDate);
 
       const res = await fetchWithAuth(`/api/manager/approvals?${queryParams.toString()}`);
       if (res.success) {
         setQuotations(res.data || []);
-        if (res.pagination) setPagination(res.pagination);
+        if (res.pagination) {
+          setPagination(res.pagination);
+          setCurrentPage(res.pagination.page);
+        }
       } else {
         setError(res.error?.message || 'Failed to retrieve approval inbox.');
       }
@@ -61,8 +69,8 @@ export default function ApprovalInbox({ onSelectQuote }) {
   };
 
   useEffect(() => {
-    loadApprovals();
-  }, [statusTab, riskFilter, sortBy]);
+    loadApprovals(1);
+  }, [statusTab, riskFilter, sortBy, startDate, endDate]);
 
   const handleSearchSubmit = (e) => {
     e.preventDefault();
@@ -149,6 +157,23 @@ export default function ApprovalInbox({ onSelectQuote }) {
               <option value="MODERATE">Moderate Risk</option>
               <option value="LOW">Low Risk</option>
             </select>
+          </div>
+
+          <div className="flex items-center gap-1.5 text-xs font-medium text-slate-600">
+            <span>From:</span>
+            <input
+              type="date"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+              className="text-xs px-2 py-1.5 border border-slate-200 rounded-lg bg-white focus:outline-none focus:border-green-600"
+            />
+            <span>To:</span>
+            <input
+              type="date"
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+              className="text-xs px-2 py-1.5 border border-slate-200 rounded-lg bg-white focus:outline-none focus:border-green-600"
+            />
           </div>
 
           <div className="flex items-center gap-1.5 text-xs font-medium text-slate-600">
@@ -332,6 +357,34 @@ export default function ApprovalInbox({ onSelectQuote }) {
                 })}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {/* ── Pagination Footer ─────────────────────────────────── */}
+        {!loading && quotations.length > 0 && pagination.totalPages > 1 && (
+          <div className="p-3.5 bg-slate-50 border-t border-slate-200 flex items-center justify-between text-xs text-slate-600">
+            <div>
+              Showing <span className="font-bold">{quotations.length}</span> of <span className="font-bold">{pagination.total}</span> quotations
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                disabled={pagination.page <= 1}
+                onClick={() => loadApprovals(pagination.page - 1)}
+                className="px-2.5 py-1 rounded bg-white border border-slate-200 font-medium hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+              >
+                Previous
+              </button>
+              <span className="font-bold text-slate-800">
+                Page {pagination.page} of {pagination.totalPages}
+              </span>
+              <button
+                disabled={pagination.page >= pagination.totalPages}
+                onClick={() => loadApprovals(pagination.page + 1)}
+                className="px-2.5 py-1 rounded bg-white border border-slate-200 font-medium hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+              >
+                Next
+              </button>
+            </div>
           </div>
         )}
       </div>

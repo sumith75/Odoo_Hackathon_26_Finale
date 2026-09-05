@@ -64,6 +64,7 @@ function sanitizeQuoteForCustomer(quote) {
   return {
     id: quote.id,
     quoteNumber: quote.quoteNumber,
+    version: quote.version || 1,
     status: quote.status,
     displayStatus,
     isExpired,
@@ -72,6 +73,32 @@ function sanitizeQuoteForCustomer(quote) {
     updatedAt: quote.updatedAt,
     confirmedAt: quote.confirmedAt,
     notes: quote.notes,
+    revisionNotes: quote.revisionNotes || null,
+    // Customer-safe previous terms snapshot (ZERO leakage of internal margins, costs, or risk scores)
+    previousTerms: quote.previousTerms && typeof quote.previousTerms === 'object'
+      ? {
+          subtotal: parseFloat(quote.previousTerms.subtotal) || 0,
+          discountAmount: parseFloat(quote.previousTerms.discountAmount) || 0,
+          totalAmount: parseFloat(quote.previousTerms.totalAmount) || 0,
+          effectiveDiscountPercentage:
+            parseFloat(quote.previousTerms.subtotal) > 0
+              ? Math.round(
+                  ((parseFloat(quote.previousTerms.discountAmount) || 0) /
+                    parseFloat(quote.previousTerms.subtotal)) *
+                    10000
+                ) / 100
+              : 0,
+          items: (quote.previousTerms.items || []).map((it) => ({
+            id: it.id,
+            productName: it.productName || it.productNameSnapshot,
+            quantity: it.quantity,
+            unitPrice: parseFloat(it.unitPrice) || 0,
+            discountPercentage: parseFloat(it.discountPercentage) || 0,
+            lineTotal: parseFloat(it.lineTotal) || 0,
+          })),
+          timestamp: quote.previousTerms.timestamp || null,
+        }
+      : null,
     currency: quote.tenant?.currency || 'INR',
     seller: {
       organizationName: quote.tenant?.name || 'DealFlow360 Enterprise',
@@ -445,11 +472,13 @@ router.post('/quotes/:id/delivery-request', async (req, res) => {
 
       await logAudit({
         tenantId,
-        userId: customerId,
+        userId: null,
         action: 'CUSTOMER_DELIVERY_REQUESTED',
         entityType: 'QUOTATION',
         entityId: quote.id,
         metadata: {
+          actor: 'CUSTOMER',
+          customerId,
           requestedDate: parsedDate.toISOString(),
           note: note?.trim(),
           quoteNumber: quote.quoteNumber,
@@ -476,10 +505,10 @@ router.post('/quotes/:id/delivery-request', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// POST /api/customer/quotes/:id/comments
+// POST /api/customer/quotes/:id/comments & /quotes/:id/comment
 // Line-Level or Deal-Level Comment Stream
 // ─────────────────────────────────────────────────────────────────────────────
-router.post('/quotes/:id/comments', async (req, res) => {
+router.post(['/quotes/:id/comments', '/quotes/:id/comment'], async (req, res) => {
   try {
     const customerId = req.user.customerId;
     const tenantId = req.user.tenantId;
@@ -519,11 +548,11 @@ router.post('/quotes/:id/comments', async (req, res) => {
 
     await logAudit({
       tenantId,
-      userId: customerId,
+      userId: null,
       action: 'CUSTOMER_ADDED_COMMENT',
       entityType: 'QUOTATION',
       entityId: quote.id,
-      metadata: { quotationItemId, author: req.user.name },
+      metadata: { actor: 'CUSTOMER', customerId, quotationItemId, author: req.user.name },
     });
 
     res.status(201).json({
@@ -541,10 +570,10 @@ router.post('/quotes/:id/comments', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// POST /api/customer/quotes/:id/change-requests
+// POST /api/customer/quotes/:id/change-requests & /quotes/:id/line-change
 // Line-Level Change Request (e.g. Quantity change, Remove item, Add item)
 // ─────────────────────────────────────────────────────────────────────────────
-router.post('/quotes/:id/change-requests', async (req, res) => {
+router.post(['/quotes/:id/change-requests', '/quotes/:id/line-change'], async (req, res) => {
   try {
     const customerId = req.user.customerId;
     const tenantId = req.user.tenantId;
@@ -557,6 +586,16 @@ router.post('/quotes/:id/change-requests', async (req, res) => {
       });
     }
 
+    if (requestType === 'QUANTITY_CHANGE') {
+      const qtyNum = parseInt(requestedValue, 10);
+      if (isNaN(qtyNum) || qtyNum <= 0) {
+        return res.status(400).json({
+          success: false,
+          error: { code: 'INVALID_QUANTITY', message: 'Requested quantity must be a positive number greater than 0.' },
+        });
+      }
+    }
+
     const quote = await prisma.quotation.findFirst({
       where: { id: req.params.id, customerId, tenantId },
     });
@@ -565,6 +604,20 @@ router.post('/quotes/:id/change-requests', async (req, res) => {
       return res.status(404).json({
         success: false,
         error: { code: 'NOT_FOUND', message: 'Quotation not found.' },
+      });
+    }
+
+    if (quote.status === 'CUSTOMER_CONFIRMED' || quote.status === 'FULFILLED') {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'ALREADY_CLOSED', message: 'Cannot request changes on an already confirmed or fulfilled quotation.' },
+      });
+    }
+
+    if (quote.validUntil && new Date(quote.validUntil) < new Date()) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'EXPIRED', message: 'This quotation has expired and cannot be modified.' },
       });
     }
 
@@ -593,11 +646,11 @@ router.post('/quotes/:id/change-requests', async (req, res) => {
 
       await logAudit({
         tenantId,
-        userId: customerId,
+        userId: null,
         action: 'CUSTOMER_SUBMITTED_CHANGE_REQUEST',
         entityType: 'QUOTATION',
         entityId: quote.id,
-        metadata: { requestType, requestedValue, comment },
+        metadata: { actor: 'CUSTOMER', customerId, requestType, requestedValue, comment },
       });
 
       return cr;
@@ -618,14 +671,14 @@ router.post('/quotes/:id/change-requests', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// POST /api/customer/quotes/:id/counter-offer
+// POST /api/customer/quotes/:id/counter-offer & /quotes/:id/negotiate
 // Submit Counter-Offer Discount -> Automated Internal Risk Recheck & Manager Re-Approval
 // ─────────────────────────────────────────────────────────────────────────────
-router.post('/quotes/:id/counter-offer', async (req, res) => {
+router.post(['/quotes/:id/counter-offer', '/quotes/:id/negotiate'], async (req, res) => {
   try {
     const customerId = req.user.customerId;
     const tenantId = req.user.tenantId;
-    const { quotationItemId, proposedDiscount, reason } = req.body;
+    const { quotationItemId, proposedDiscount, reason, version, expectedVersion } = req.body;
 
     if (proposedDiscount === undefined || proposedDiscount === null) {
       return res.status(400).json({
@@ -659,7 +712,19 @@ router.post('/quotes/:id/counter-offer', async (req, res) => {
       });
     }
 
-    if (quote.status === 'CUSTOMER_CONFIRMED') {
+    // Concurrency / Stale version check
+    const expVer = expectedVersion !== undefined ? parseInt(expectedVersion, 10) : version !== undefined ? parseInt(version, 10) : null;
+    if (expVer !== null && !isNaN(expVer) && quote.version !== expVer) {
+      return res.status(409).json({
+        success: false,
+        error: {
+          code: 'STALE_QUOTATION_VERSION',
+          message: `Quotation has changed. Expected version ${expVer}, but current version is ${quote.version}. Refresh and review the latest version.`,
+        },
+      });
+    }
+
+    if (quote.status === 'CUSTOMER_CONFIRMED' || quote.status === 'FULFILLED') {
       return res.status(400).json({
         success: false,
         error: { code: 'ALREADY_CONFIRMED', message: 'Cannot negotiate an already confirmed quotation.' },
@@ -731,6 +796,8 @@ router.post('/quotes/:id/counter-offer', async (req, res) => {
       timestamp: new Date().toISOString(),
     };
 
+    const requiresApproval = Boolean(riskEvaluation.approvalRequired);
+
     // Execute negotiation state transition in transaction
     const result = await prisma.$transaction(async (tx) => {
       // 1. Create NegotiationProposal record
@@ -745,16 +812,17 @@ router.post('/quotes/:id/counter-offer', async (req, res) => {
           proposedDiscount: discountNum,
           proposedTotalAmount: proposedPricing.totalAmount,
           reason: reason?.trim() || null,
-          status: 'CUSTOMER_SUBMITTED',
+          status: requiresApproval ? 'CUSTOMER_SUBMITTED' : 'ACCEPTED',
         },
       });
 
       // 2. Determine approval status:
-      // If risk evaluation requires approval OR discount ceiling is violated, route to manager
-      let newStatus = 'NEGOTIATION';
-      let newApprovalStatus = quote.approvalStatus;
+      // If risk evaluation requires approval, route to manager/finance.
+      // If safe negotiation (no ceiling or approval violations), remain APPROVED.
+      let newStatus = 'APPROVED';
+      let newApprovalStatus = 'APPROVED';
 
-      if (riskEvaluation.approvalRequired || discountNum > currentDiscount) {
+      if (requiresApproval) {
         newStatus = 'NEGOTIATION';
         newApprovalStatus =
           riskEvaluation.requiredApproverRole === 'FINANCE_OPERATIONS'
@@ -784,6 +852,7 @@ router.post('/quotes/:id/counter-offer', async (req, res) => {
         data: {
           status: newStatus,
           approvalStatus: newApprovalStatus,
+          version: { increment: 1 },
           subtotal: proposedPricing.subtotal,
           discountAmount: proposedPricing.discountAmount,
           taxAmount: proposedPricing.taxAmount,
@@ -821,35 +890,58 @@ router.post('/quotes/:id/counter-offer', async (req, res) => {
       // 4. Audit Trail
       await logAudit({
         tenantId,
-        userId: customerId,
+        userId: null,
         action: 'CUSTOMER_SUBMITTED_COUNTER_OFFER',
         entityType: 'QUOTATION',
         entityId: quote.id,
         metadata: {
+          actor: 'CUSTOMER',
+          customerId,
           roundNumber,
           currentDiscount,
           proposedDiscount: discountNum,
           proposedTotal: proposedPricing.totalAmount,
-          requiresApproval: riskEvaluation.approvalRequired,
+          requiresApproval,
           riskScore: riskEvaluation.riskScore,
         },
       });
+
+      if (requiresApproval) {
+        await logAudit({
+          tenantId,
+          userId: null,
+          action: 'NEGOTIATION_APPROVAL_TRIGGERED',
+          entityType: 'QUOTATION',
+          entityId: quote.id,
+          metadata: {
+            actor: 'CUSTOMER',
+            customerId,
+            roundNumber,
+            proposedDiscount: discountNum,
+            requiredApproverRole: riskEvaluation.requiredApproverRole,
+            riskLevel: riskEvaluation.riskLevel,
+          },
+        });
+      }
 
       return proposal;
     });
 
     console.log(
-      `🤝 [CUSTOMER DEAL ROOM] Counter-Offer Submitted: Quote #${quote.quoteNumber} | Round #${roundNumber} | Proposed Discount: ${discountNum}% | Auto-Risk: ${riskEvaluation.riskLevel}`
+      `🤝 [CUSTOMER DEAL ROOM] Counter-Offer Submitted: Quote #${quote.quoteNumber} | Round #${roundNumber} | Proposed Discount: ${discountNum}% | Auto-Risk: ${riskEvaluation.riskLevel} | Requires Approval: ${requiresApproval}`
     );
 
     res.status(201).json({
       success: true,
-      message: 'Your counter-offer has been submitted and sent to the seller for review.',
+      message: requiresApproval
+        ? 'Your counter-offer has been submitted and sent to the seller for review.'
+        : 'Your requested discount is within approved commercial policy and has been applied.',
       data: {
         proposal: result,
         proposedTotal: proposedPricing.totalAmount,
         roundNumber,
-        status: 'UNDER_NEGOTIATION',
+        requiresApproval,
+        status: requiresApproval ? 'UNDER_NEGOTIATION' : 'READY_FOR_ACCEPTANCE',
       },
     });
   } catch (err) {
@@ -869,7 +961,7 @@ router.post('/quotes/:id/confirm', async (req, res) => {
   try {
     const customerId = req.user.customerId;
     const tenantId = req.user.tenantId;
-    const { termsAccepted = true, notes } = req.body;
+    const { termsAccepted = true, notes, version, expectedVersion } = req.body;
 
     if (!termsAccepted) {
       return res.status(400).json({
@@ -889,6 +981,12 @@ router.post('/quotes/:id/confirm', async (req, res) => {
         items: true,
         tenant: true,
         salesRep: { select: { id: true, name: true, email: true } },
+        negotiationProposals: {
+          where: { status: { in: ['CUSTOMER_SUBMITTED', 'SELLER_REVIEWING'] } },
+        },
+        changeRequests: {
+          where: { status: { in: ['CUSTOMER_SUBMITTED', 'SELLER_REVIEWING'] } },
+        },
       },
     });
 
@@ -909,6 +1007,18 @@ router.post('/quotes/:id/confirm', async (req, res) => {
       });
     }
 
+    // Concurrency / Stale version check
+    const expVer = expectedVersion !== undefined ? parseInt(expectedVersion, 10) : version !== undefined ? parseInt(version, 10) : null;
+    if (expVer !== null && !isNaN(expVer) && quote.version !== expVer) {
+      return res.status(409).json({
+        success: false,
+        error: {
+          code: 'STALE_QUOTATION_VERSION',
+          message: `Quotation has changed. Expected version ${expVer}, but quotation is at version ${quote.version}. Refresh and review the latest version.`,
+        },
+      });
+    }
+
     // Check expiration
     if (quote.validUntil && new Date(quote.validUntil) < new Date()) {
       return res.status(400).json({
@@ -921,7 +1031,11 @@ router.post('/quotes/:id/confirm', async (req, res) => {
     }
 
     // Check pending approvals
-    if (quote.status === 'PENDING_APPROVAL' || quote.approvalStatus === 'PENDING_MANAGER' || quote.approvalStatus === 'PENDING_FINANCE') {
+    if (
+      quote.status === 'PENDING_APPROVAL' ||
+      quote.approvalStatus === 'PENDING_MANAGER' ||
+      quote.approvalStatus === 'PENDING_FINANCE'
+    ) {
       return res.status(400).json({
         success: false,
         error: {
@@ -931,13 +1045,52 @@ router.post('/quotes/:id/confirm', async (req, res) => {
       });
     }
 
+    // Check unresolved negotiations
+    if (quote.negotiationProposals?.length > 0 || quote.changeRequests?.length > 0) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'UNRESOLVED_NEGOTIATION',
+          message: 'Quotation has active pending negotiation requests that must be resolved before confirmation.',
+        },
+      });
+    }
+
+    // Check confirmable status
+    const isConfirmableStatus =
+      ['APPROVED', 'SENT_TO_CUSTOMER', 'NEGOTIATION'].includes(quote.status) &&
+      quote.approvalStatus === 'APPROVED';
+
+    if (!isConfirmableStatus) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'NOT_CONFIRMABLE',
+          message: `Quotation is in ${quote.status} status and cannot be confirmed. Quotation must be approved by the seller before confirmation.`,
+        },
+      });
+    }
+
     // Atomic confirmation transaction
     const confirmedQuote = await prisma.$transaction(async (tx) => {
+      // Row-level lock / state check
+      const lockCheck = await tx.quotation.findFirst({
+        where: { id: quote.id, tenantId, status: quote.status, version: quote.version },
+      });
+
+      if (!lockCheck) {
+        const err = new Error('Quotation has been updated by another transaction.');
+        err.statusCode = 409;
+        err.code = 'CONCURRENT_UPDATE_CONFLICT';
+        throw err;
+      }
+
       const updated = await tx.quotation.update({
         where: { id: quote.id },
         data: {
           status: 'CUSTOMER_CONFIRMED',
           confirmedAt: new Date(),
+          version: { increment: 1 },
         },
         include: {
           customer: true,
@@ -965,11 +1118,13 @@ router.post('/quotes/:id/confirm', async (req, res) => {
       // Audit Log
       await logAudit({
         tenantId,
-        userId: customerId,
+        userId: null,
         action: 'CUSTOMER_CONFIRMED_DEAL',
         entityType: 'QUOTATION',
         entityId: quote.id,
         metadata: {
+          actor: 'CUSTOMER',
+          customerId,
           quoteNumber: quote.quoteNumber,
           totalAmount: parseFloat(quote.totalAmount),
           customerName: quote.customer?.name,
@@ -991,10 +1146,54 @@ router.post('/quotes/:id/confirm', async (req, res) => {
     });
   } catch (err) {
     console.error('[CUSTOMER DEAL ROOM] Confirm error:', err);
-    res.status(500).json({
+    const statusCode = err.statusCode || 500;
+    res.status(statusCode).json({
       success: false,
-      error: { code: 'CONFIRMATION_ERROR', message: err.message || 'Failed to confirm quotation.' },
+      error: { code: err.code || 'CONFIRMATION_ERROR', message: err.message || 'Failed to confirm quotation.' },
     });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/customer/quotes/:id/negotiations & /proposals
+// Negotiation Dossier & Proposal History
+// ─────────────────────────────────────────────────────────────────────────────
+router.get(['/quotes/:id/negotiations', '/quotes/:id/proposals'], async (req, res) => {
+  try {
+    const customerId = req.user.customerId;
+    const tenantId = req.user.tenantId;
+
+    const quote = await prisma.quotation.findFirst({
+      where: { id: req.params.id, customerId, tenantId },
+      include: {
+        negotiationProposals: { orderBy: { createdAt: 'desc' } },
+        changeRequests: { orderBy: { createdAt: 'desc' } },
+        deliveryRequests: { orderBy: { createdAt: 'desc' } },
+      },
+    });
+
+    if (!quote) {
+      return res.status(404).json({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'Quotation not found.' },
+      });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        quotationId: quote.id,
+        quoteNumber: quote.quoteNumber,
+        status: quote.status,
+        proposals: quote.negotiationProposals,
+        changeRequests: quote.changeRequests,
+        deliveryRequests: quote.deliveryRequests,
+        timeline: buildCustomerTimeline(quote),
+      },
+    });
+  } catch (err) {
+    console.error('[CUSTOMER DEAL ROOM] Fetch negotiations error:', err);
+    res.status(500).json({ success: false, error: { code: 'FETCH_ERROR', message: 'Failed to fetch negotiations.' } });
   }
 });
 

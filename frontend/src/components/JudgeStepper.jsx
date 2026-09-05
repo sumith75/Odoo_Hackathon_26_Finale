@@ -1,92 +1,64 @@
 import React from 'react';
 import { 
-  Play, CheckCircle2, AlertCircle, ArrowRight, ShieldCheck, 
+  Play, CheckCircle2, ArrowRight, ShieldCheck, 
   Sparkles, Warehouse, Receipt, Scale, CreditCard, BarChart3, UserCheck, Settings, ShoppingCart
 } from 'lucide-react';
 
 export const STEPS = [
-  { id: 1, title: '1. Google Login', role: 'admin', desc: 'Google Workspace Sign-In & 5 Roles' },
-  { id: 2, title: '2. Admin Config', role: 'admin', desc: 'Hardware 15%, Service 10%, Sub 5%' },
-  { id: 3, title: '3. Create Quote', role: 'sales', desc: 'Acme: 10 Laptops, 1 Service, 10 Support' },
-  { id: 4, title: '4. Apply 18% Disc', role: 'sales', desc: 'Service 18% exceeds 10% policy' },
-  { id: 5, title: '5. Auto-Detect Risk', role: 'sales', desc: 'System flags HIGH RISK (82) & locks' },
-  { id: 6, title: '6. Manager Approve', role: 'manager', desc: 'Manager reviews excess 8% & approves' },
-  { id: 7, title: '7. Smart Upsell', role: 'sales', desc: 'System recommends add-on opportunities' },
-  { id: 8, title: '8. Split Stock', role: 'warehouse', desc: 'Auto-allocates: Bangalore 8, Hyderabad 2' },
-  { id: 9, title: '9. Customer Portal', role: 'customer', desc: 'Acme customer reviews official quote' },
-  { id: 10, title: '10. Negotiate 20%', role: 'customer', desc: 'Customer counter-offers 20% discount' },
-  { id: 11, title: '11. Re-Check Risk', role: 'customer', desc: '20% > 15% limit -> Re-locks for approval' },
-  { id: 12, title: '12. Manager Concession', role: 'manager', desc: 'Manager approves counter-offer' },
-  { id: 13, title: '13. Confirm Quote', role: 'customer', desc: 'Customer confirms (CUSTOMER_CONFIRMED)' },
-  { id: 14, title: '14. Hybrid Invoice', role: 'billing', desc: 'Capex ₹6,56,400 + MRR ₹28,500/mo' },
-  { id: 15, title: '15. Settle & Health', role: 'dashboard', desc: 'Payment PAID & Deal Health: HEALTHY' }
+  { id: 1, title: '1. Multi-Tenant Auth', role: 'admin', path: '/admin/organization', desc: 'Tenant isolation & RBAC governance in PostgreSQL' },
+  { id: 2, title: '2. Admin Catalog & Rules', role: 'admin', path: '/admin/products', desc: 'Hardware, Services, Subscriptions & Discount Rules' },
+  { id: 3, title: '3. CPQ Deal Studio', role: 'sales', path: '/sales/cpq', desc: 'Live pricing, margin & risk calculation from DB' },
+  { id: 4, title: '4. Manager Approvals', role: 'manager', path: '/manager/approvals', desc: 'Review deal margins & audit compliance' },
+  { id: 5, title: '5. Customer Deal Room', role: 'customer', path: '/customer', desc: 'Counter-offer negotiation & e-signing' },
+  { id: 6, title: '6. Finance & Fulfillment', role: 'finance', path: '/finance/dashboard', desc: 'Automated warehouse dispatch & invoicing' }
 ];
 
 export default function JudgeStepper({ currentStep, onSelectStep, onRunNextStep, isAutoPlaying, onToggleAutoPlay }) {
   return (
-    <div className="judge-stepper-container">
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-          <div style={{ 
-            background: 'linear-gradient(135deg, #f59e0b 0%, #ea580c 100%)', 
-            padding: '2px 8px', 
-            borderRadius: '4px', 
-            fontSize: '0.7rem', 
-            fontWeight: '800', 
-            color: 'white' 
-          }}>
-            🎯 JUDGE DEMO MODE
+    <div className="bg-slate-900 text-white p-3 rounded-xl border border-slate-800 shadow-md">
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2">
+          <div className="bg-emerald-600 px-2 py-0.5 rounded text-[10px] font-extrabold uppercase tracking-wider text-white">
+            Live Database Mode
           </div>
-          <span style={{ fontSize: '0.8rem', color: '#94a3b8' }}>
-            Click any step below or run the automatic walkthrough:
+          <span className="text-xs text-slate-400">
+            Powered by Neon PostgreSQL & Redis:
           </span>
         </div>
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
+        <div className="flex gap-2">
           <button 
+            type="button"
             onClick={onToggleAutoPlay}
-            className={`btn ${isAutoPlaying ? 'btn-danger' : 'btn-outline'}`}
-            style={{ padding: '0.25rem 0.75rem', fontSize: '0.75rem' }}
+            className="px-2.5 py-1 text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 rounded border border-slate-700 flex items-center gap-1"
           >
-            <Play size={12} fill={isAutoPlaying ? 'currentColor' : 'none'} />
-            {isAutoPlaying ? 'Pause Walkthrough' : 'Run Auto Walkthrough'}
+            <Play size={11} /> {isAutoPlaying ? 'Pause' : 'Tour'}
           </button>
           <button 
+            type="button"
             onClick={onRunNextStep}
-            className="btn btn-primary"
-            style={{ padding: '0.25rem 0.75rem', fontSize: '0.75rem' }}
+            className="px-3 py-1 text-xs font-semibold bg-green-700 hover:bg-green-600 text-white rounded flex items-center gap-1 shadow-xs"
           >
-            Next Step <ArrowRight size={12} />
+            Next <ArrowRight size={11} />
           </button>
         </div>
       </div>
 
-      <div className="judge-stepper-wrapper">
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2">
         {STEPS.map((step) => {
           const isActive = currentStep === step.id;
-          const isDone = currentStep > step.id;
-
           return (
             <button
               key={step.id}
-              onClick={() => onSelectStep(step.id)}
-              className={`judge-step-btn ${isActive ? 'active' : ''} ${isDone ? 'completed' : ''}`}
-              title={step.desc}
+              type="button"
+              onClick={() => onSelectStep && onSelectStep(step)}
+              className={`p-2 rounded-lg text-left text-xs transition-all border ${
+                isActive
+                  ? 'bg-green-950/80 border-green-600 text-white shadow-xs'
+                  : 'bg-slate-800/60 border-slate-700/60 text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+              }`}
             >
-              {isDone ? (
-                <CheckCircle2 size={13} style={{ color: '#10b981' }} />
-              ) : isActive ? (
-                <span style={{ 
-                  display: 'inline-block', 
-                  width: '8px', 
-                  height: '8px', 
-                  borderRadius: '50%', 
-                  background: '#6366f1',
-                  boxShadow: '0 0 8px #6366f1'
-                }} />
-              ) : (
-                <span style={{ opacity: 0.5 }}>{step.id}.</span>
-              )}
-              <span>{step.title.split('. ')[1]}</span>
+              <div className="font-bold text-[11px] truncate">{step.title}</div>
+              <div className="text-[10px] text-slate-500 truncate mt-0.5">{step.desc}</div>
             </button>
           );
         })}

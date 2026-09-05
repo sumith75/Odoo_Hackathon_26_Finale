@@ -203,6 +203,44 @@ export default function SalesDashboard({ onNavigateToCPQ, onNavigateToDeals, onV
         </div>
       </div>
 
+      {/* ── Quotation Pipeline Stages Breakdown ───────────────────────── */}
+      <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs">
+        <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-3">
+          <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider">Quotation Pipeline Stages</h3>
+          <span className="text-[11px] text-slate-400">Total Lifecycle Distribution</span>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 text-center">
+          <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-200">
+            <span className="text-xs text-slate-500 block">Drafts</span>
+            <span className="text-base font-bold text-slate-900">{summary?.draftCount || 0}</span>
+          </div>
+          <div className="p-2.5 bg-amber-50 rounded-lg border border-amber-200">
+            <span className="text-xs text-amber-700 block">In Review</span>
+            <span className="text-base font-bold text-amber-800">{summary?.pendingApprovalCount || 0}</span>
+          </div>
+          <div className="p-2.5 bg-emerald-50 rounded-lg border border-emerald-200">
+            <span className="text-xs text-emerald-700 block">Approved</span>
+            <span className="text-base font-bold text-emerald-800">{summary?.approvedCount || 0}</span>
+          </div>
+          <div className="p-2.5 bg-blue-50 rounded-lg border border-blue-200">
+            <span className="text-xs text-blue-700 block">Sent to Customer</span>
+            <span className="text-base font-bold text-blue-800">{summary?.sentToCustomerCount || 0}</span>
+          </div>
+          <div className="p-2.5 bg-purple-50 rounded-lg border border-purple-200">
+            <span className="text-xs text-purple-700 block">Negotiation</span>
+            <span className="text-base font-bold text-purple-800">{summary?.negotiationCount || 0}</span>
+          </div>
+          <div className="p-2.5 bg-teal-50 rounded-lg border border-teal-200">
+            <span className="text-xs text-teal-700 block">Confirmed</span>
+            <span className="text-base font-bold text-teal-800">{summary?.customerConfirmedCount || 0}</span>
+          </div>
+          <div className="p-2.5 bg-indigo-50 rounded-lg border border-indigo-200">
+            <span className="text-xs text-indigo-700 block">Fulfillment</span>
+            <span className="text-base font-bold text-indigo-800">{summary?.fulfillmentCount || 0}</span>
+          </div>
+        </div>
+      </div>
+
       {/* ── Recent Deals Table ─────────────────────────────── */}
       <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-xs">
         <div className="flex items-center justify-between pb-4 border-b border-slate-100 mb-4">

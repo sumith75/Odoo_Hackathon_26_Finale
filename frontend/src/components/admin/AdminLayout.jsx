@@ -4,6 +4,7 @@ import {
   LayoutDashboard,
   Building2,
   Users,
+  UserCheck,
   Package,
   Percent,
   CheckCheck,
@@ -14,15 +15,18 @@ import {
   X,
   ExternalLink,
   ShieldCheck,
+  Warehouse,
 } from 'lucide-react';
 
 const ADMIN_NAVIGATION = [
   { id: 'dashboard', label: 'Admin Dashboard', icon: LayoutDashboard },
   { id: 'organization', label: 'Organization Setup', icon: Building2 },
   { id: 'team', label: 'Team Management', icon: Users },
+  { id: 'customers', label: 'Customer Directory', icon: UserCheck },
   { id: 'products', label: 'Product Catalog', icon: Package },
   { id: 'discount-rules', label: 'Discount Rules', icon: Percent },
   { id: 'approval-rules', label: 'Approval Rules', icon: CheckCheck },
+  { id: 'warehouses', label: 'Warehouses & Inventory', icon: Warehouse },
   { id: 'audit', label: 'Audit Activity', icon: History },
 ];
 
@@ -61,10 +65,10 @@ export default function AdminLayout({ activeTab, onSelectTab, children }) {
               <span className="text-xs font-medium text-slate-500 mr-2">Organization:</span>
               <span className="text-xs font-bold text-slate-800 bg-slate-100 px-2.5 py-1 rounded-md border border-slate-200 flex items-center gap-1.5">
                 <Building2 size={13} className="text-green-700" />
-                {user?.organization?.name || 'TechWorld Solutions'}
+                {user?.organizationName || user?.organization?.name || '—'}
               </span>
               <span className="ml-2 text-[10px] font-bold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                {user?.organization?.currency || 'INR'}
+                {user?.currency || user?.organization?.currency || ''}
               </span>
             </div>
           </div>

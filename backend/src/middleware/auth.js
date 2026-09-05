@@ -73,9 +73,21 @@ export async function authenticateUser(req, res, next) {
       email: user.email,
       role: user.role,
       status: user.status,
+      phone: user.phone,
       tenantId: user.tenantId,
       organizationName: user.tenant?.name || 'DealFlow360 Enterprise',
       currency: user.tenant?.currency || 'INR',
+      organization: user.tenant ? {
+        id: user.tenant.id,
+        name: user.tenant.name,
+        currency: user.tenant.currency,
+        address: user.tenant.address,
+        companyEmail: user.tenant.companyEmail,
+        phone: user.tenant.phone,
+        industry: user.tenant.industry,
+        country: user.tenant.country,
+        timezone: user.tenant.timezone,
+      } : null,
     };
     req.tenantId = user.tenantId;
 

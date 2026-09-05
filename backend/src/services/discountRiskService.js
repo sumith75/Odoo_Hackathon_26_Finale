@@ -42,12 +42,24 @@ export async function evaluateQuotationRisk(tenantId, items = [], customerTier =
     const itemType = item.productTypeSnapshot || item.type || 'HARDWARE';
     const itemName = item.productNameSnapshot || item.name || 'Product';
 
-    // Find matching discount rule for productType & customerTier
+    // Find matching discount rule for productType & customerTier with strict priority:
+    // 1. Exact productType + exact customerTier
+    // 2. Exact productType + customerTier 'ALL' / null
+    // 3. Any productType + exact customerTier
+    // 4. Any productType + customerTier 'ALL' / null
+    // 5. Product type fallback
     const matchingRule =
       discountRules.find(
-        (r) =>
-          r.productType === itemType &&
-          (r.customerTier === customerTier || r.customerTier === 'ALL')
+        (r) => r.productType === itemType && r.customerTier === customerTier
+      ) ||
+      discountRules.find(
+        (r) => r.productType === itemType && (r.customerTier === 'ALL' || !r.customerTier)
+      ) ||
+      discountRules.find(
+        (r) => (!r.productType || r.productType === 'ALL') && r.customerTier === customerTier
+      ) ||
+      discountRules.find(
+        (r) => (!r.productType || r.productType === 'ALL') && (r.customerTier === 'ALL' || !r.customerTier)
       ) ||
       discountRules.find((r) => r.productType === itemType) ||
       discountRules.find((r) => !r.productType);

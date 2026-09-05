@@ -77,7 +77,7 @@ export default function FinanceLayout({ activeTab, onSelectTab, children }) {
             <div className="hidden md:flex items-center pl-4 border-l border-slate-200">
               <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-800 border border-emerald-200">
                 <Building2 size={12} className="text-emerald-700" />
-                {user?.organizationName || 'TechWorld Solutions'}
+                {user?.organizationName || '—'}
               </span>
             </div>
           </div>
@@ -95,7 +95,7 @@ export default function FinanceLayout({ activeTab, onSelectTab, children }) {
                 {user?.name?.slice(0, 2).toUpperCase() || 'FO'}
               </div>
               <div className="hidden lg:block text-left leading-tight">
-                <p className="text-xs font-semibold text-slate-800">{user?.name || 'Priya Rao'}</p>
+                <p className="text-xs font-semibold text-slate-800">{user?.name}</p>
                 <p className="text-[10px] text-slate-500 font-medium capitalize">
                   Finance & Operations
                 </p>

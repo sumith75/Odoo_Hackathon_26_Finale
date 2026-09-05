@@ -235,7 +235,7 @@ async function main() {
   });
   console.log('  👥 Team members seeded (Sales Rep, Sales Manager, Finance/Ops)');
 
-  // 5. Customers
+  // 5. Customers (Demo Accounts for Customer Tier Governance)
   const acmeCustomer = await prisma.customer.upsert({
     where: {
       tenantId_email: {
@@ -264,6 +264,62 @@ async function main() {
     },
   });
 
+  const betaCustomer = await prisma.customer.upsert({
+    where: {
+      tenantId_email: {
+        tenantId: org.id,
+        email: 'contact@betaindustries.com',
+      },
+    },
+    update: {
+      name: 'Beta Industries',
+      companyName: 'Beta Industries',
+      tier: 'SILVER',
+      currency: 'INR',
+      status: 'ACTIVE',
+      passwordHash: custPass,
+    },
+    create: {
+      id: 'cust-beta-002',
+      tenantId: org.id,
+      name: 'Beta Industries',
+      companyName: 'Beta Industries',
+      email: 'contact@betaindustries.com',
+      tier: 'SILVER',
+      currency: 'INR',
+      status: 'ACTIVE',
+      passwordHash: custPass,
+    },
+  });
+
+  const gammaCustomer = await prisma.customer.upsert({
+    where: {
+      tenantId_email: {
+        tenantId: org.id,
+        email: 'billing@gammasolutions.com',
+      },
+    },
+    update: {
+      name: 'Gamma Solutions',
+      companyName: 'Gamma Solutions',
+      tier: 'BRONZE',
+      currency: 'INR',
+      status: 'ACTIVE',
+      passwordHash: custPass,
+    },
+    create: {
+      id: 'cust-gamma-003',
+      tenantId: org.id,
+      name: 'Gamma Solutions',
+      companyName: 'Gamma Solutions',
+      email: 'billing@gammasolutions.com',
+      tier: 'BRONZE',
+      currency: 'INR',
+      status: 'ACTIVE',
+      passwordHash: custPass,
+    },
+  });
+
   await prisma.customer.upsert({
     where: {
       tenantId_email: {
@@ -280,7 +336,7 @@ async function main() {
       passwordHash: custPass,
     },
     create: {
-      id: 'cust-global-002',
+      id: 'cust-global-004',
       tenantId: org.id,
       name: 'Global Dynamics',
       companyName: 'Global Dynamics Pvt Ltd',
@@ -291,7 +347,7 @@ async function main() {
       passwordHash: custPass,
     },
   });
-  console.log('  🏢 Demo Customers seeded: Acme Corporation (GOLD), Global Dynamics (SILVER)');
+  console.log('  🏢 Demo Customers seeded: Acme Corporation (GOLD), Beta Industries (SILVER), Gamma Solutions (BRONZE)');
 
   // 6. Demo Products with costPrice for accurate margin engine
   const products = [
@@ -392,12 +448,127 @@ async function main() {
   }
   console.log('  📦 5 Demo Products seeded with costPrice (Laptop X, Installation, Premium Support, Monitor, Training)');
 
-  // 7. Discount Rules
+  // 7. Discount Rules (Tier-specific and category-specific governance rules)
   const discountRules = [
+    // ── GOLD TIER RULES ──────────────────────────────────────
+    {
+      id: 'disc-rule-gold-hw',
+      tenantId: org.id,
+      name: 'Gold Tier - Hardware Policy',
+      productType: 'HARDWARE',
+      category: 'Computing',
+      customerTier: 'GOLD',
+      maxDiscountPercentage: 15.00,
+      requiresApprovalAbove: 15.00,
+      requiresFinanceApprovalAbove: 25.00,
+      isActive: true,
+    },
+    {
+      id: 'disc-rule-gold-svc',
+      tenantId: org.id,
+      name: 'Gold Tier - Service Policy',
+      productType: 'SERVICE',
+      category: 'Professional Services',
+      customerTier: 'GOLD',
+      maxDiscountPercentage: 10.00,
+      requiresApprovalAbove: 10.00,
+      requiresFinanceApprovalAbove: 20.00,
+      isActive: true,
+    },
+    {
+      id: 'disc-rule-gold-sub',
+      tenantId: org.id,
+      name: 'Gold Tier - Subscription Policy',
+      productType: 'SUBSCRIPTION',
+      category: 'Support Plans',
+      customerTier: 'GOLD',
+      maxDiscountPercentage: 5.00,
+      requiresApprovalAbove: 5.00,
+      requiresFinanceApprovalAbove: 10.00,
+      isActive: true,
+    },
+
+    // ── SILVER TIER RULES ────────────────────────────────────
+    {
+      id: 'disc-rule-silver-hw',
+      tenantId: org.id,
+      name: 'Silver Tier - Hardware Policy',
+      productType: 'HARDWARE',
+      category: 'Computing',
+      customerTier: 'SILVER',
+      maxDiscountPercentage: 10.00,
+      requiresApprovalAbove: 10.00,
+      requiresFinanceApprovalAbove: 20.00,
+      isActive: true,
+    },
+    {
+      id: 'disc-rule-silver-svc',
+      tenantId: org.id,
+      name: 'Silver Tier - Service Policy',
+      productType: 'SERVICE',
+      category: 'Professional Services',
+      customerTier: 'SILVER',
+      maxDiscountPercentage: 7.00,
+      requiresApprovalAbove: 7.00,
+      requiresFinanceApprovalAbove: 15.00,
+      isActive: true,
+    },
+    {
+      id: 'disc-rule-silver-sub',
+      tenantId: org.id,
+      name: 'Silver Tier - Subscription Policy',
+      productType: 'SUBSCRIPTION',
+      category: 'Support Plans',
+      customerTier: 'SILVER',
+      maxDiscountPercentage: 3.00,
+      requiresApprovalAbove: 3.00,
+      requiresFinanceApprovalAbove: 8.00,
+      isActive: true,
+    },
+
+    // ── BRONZE TIER RULES ────────────────────────────────────
+    {
+      id: 'disc-rule-bronze-hw',
+      tenantId: org.id,
+      name: 'Bronze Tier - Hardware Policy',
+      productType: 'HARDWARE',
+      category: 'Computing',
+      customerTier: 'BRONZE',
+      maxDiscountPercentage: 5.00,
+      requiresApprovalAbove: 5.00,
+      requiresFinanceApprovalAbove: 15.00,
+      isActive: true,
+    },
+    {
+      id: 'disc-rule-bronze-svc',
+      tenantId: org.id,
+      name: 'Bronze Tier - Service Policy',
+      productType: 'SERVICE',
+      category: 'Professional Services',
+      customerTier: 'BRONZE',
+      maxDiscountPercentage: 3.00,
+      requiresApprovalAbove: 3.00,
+      requiresFinanceApprovalAbove: 10.00,
+      isActive: true,
+    },
+    {
+      id: 'disc-rule-bronze-sub',
+      tenantId: org.id,
+      name: 'Bronze Tier - Subscription Policy',
+      productType: 'SUBSCRIPTION',
+      category: 'Support Plans',
+      customerTier: 'BRONZE',
+      maxDiscountPercentage: 2.00,
+      requiresApprovalAbove: 2.00,
+      requiresFinanceApprovalAbove: 5.00,
+      isActive: true,
+    },
+
+    // ── BASELINE / ALL TIERS FALLBACK RULES ──────────────────
     {
       id: 'disc-rule-001',
       tenantId: org.id,
-      name: 'Hardware Ceiling & Thresholds',
+      name: 'Hardware Baseline Ceiling',
       productType: 'HARDWARE',
       category: 'Computing',
       customerTier: 'ALL',
@@ -409,7 +580,7 @@ async function main() {
     {
       id: 'disc-rule-002',
       tenantId: org.id,
-      name: 'Service Ceiling & Thresholds',
+      name: 'Service Baseline Ceiling',
       productType: 'SERVICE',
       category: 'Professional Services',
       customerTier: 'ALL',
@@ -421,7 +592,7 @@ async function main() {
     {
       id: 'disc-rule-003',
       tenantId: org.id,
-      name: 'Subscription Ceiling & Thresholds',
+      name: 'Subscription Baseline Ceiling',
       productType: 'SUBSCRIPTION',
       category: 'Support Plans',
       customerTier: 'ALL',

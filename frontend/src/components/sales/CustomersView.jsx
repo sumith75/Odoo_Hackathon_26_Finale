@@ -13,9 +13,9 @@ import {
 } from 'lucide-react';
 
 const TIER_BADGE = {
-  GOLD: 'bg-amber-50 text-amber-800 border-amber-200',
-  SILVER: 'bg-slate-100 text-slate-800 border-slate-200',
-  BRONZE: 'bg-orange-50 text-orange-800 border-orange-200',
+  GOLD: 'bg-amber-100 text-amber-900 border-amber-300 font-bold',
+  SILVER: 'bg-slate-200 text-slate-800 border-slate-300 font-bold',
+  BRONZE: 'bg-orange-100 text-orange-900 border-orange-300 font-bold',
 };
 
 export default function CustomersView({ onSelectCustomerForQuote }) {
@@ -23,6 +23,7 @@ export default function CustomersView({ onSelectCustomerForQuote }) {
   const [customers, setCustomers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+  const [tierFilter, setTierFilter] = useState('ALL');
 
   const loadCustomers = async () => {
     setLoading(true);
@@ -42,12 +43,14 @@ export default function CustomersView({ onSelectCustomerForQuote }) {
     loadCustomers();
   }, []);
 
-  const filtered = customers.filter(
-    (c) =>
+  const filtered = customers.filter((c) => {
+    const matchesSearch =
       c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       (c.companyName && c.companyName.toLowerCase().includes(searchTerm.toLowerCase())) ||
-      c.email.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+      c.email.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesTier = tierFilter === 'ALL' || c.tier === tierFilter;
+    return matchesSearch && matchesTier;
+  });
 
   return (
     <div className="space-y-6">
@@ -58,7 +61,7 @@ export default function CustomersView({ onSelectCustomerForQuote }) {
             <Users className="text-green-700" size={24} /> Customer Directory
           </h1>
           <p className="text-xs text-slate-500 mt-1">
-            Accounts, pricing tiers, and commercial relationship records.
+            Accounts, commercial classifications, and organization discount governance records.
           </p>
         </div>
 
@@ -70,8 +73,8 @@ export default function CustomersView({ onSelectCustomerForQuote }) {
         </button>
       </div>
 
-      {/* ── Search Bar ────────────────────────────────────── */}
-      <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs">
+      {/* ── Search & Filter Bar ────────────────────────────── */}
+      <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs flex flex-col sm:flex-row items-center justify-between gap-3">
         <div className="relative w-full sm:w-80">
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <input
@@ -81,6 +84,20 @@ export default function CustomersView({ onSelectCustomerForQuote }) {
             onChange={(e) => setSearchTerm(e.target.value)}
             className="w-full text-xs pl-9 pr-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-600/30 focus:border-green-600"
           />
+        </div>
+
+        <div className="flex items-center gap-2 self-stretch sm:self-auto">
+          <span className="text-xs font-bold text-slate-500">Commercial Tier:</span>
+          <select
+            value={tierFilter}
+            onChange={(e) => setTierFilter(e.target.value)}
+            className="text-xs px-3 py-1.5 border border-slate-200 rounded-lg bg-white font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-green-600/30"
+          >
+            <option value="ALL">All Tiers ({customers.length})</option>
+            <option value="GOLD">Gold Tier</option>
+            <option value="SILVER">Silver Tier</option>
+            <option value="BRONZE">Bronze Tier</option>
+          </select>
         </div>
       </div>
 

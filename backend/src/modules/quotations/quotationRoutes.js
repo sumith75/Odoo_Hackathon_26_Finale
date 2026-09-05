@@ -6,20 +6,40 @@ import { calculateQuotationTotals } from '../../services/pricingEngine.js';
 import { evaluateQuotationRisk } from '../../services/discountRiskService.js';
 import { getQuoteRecommendations } from '../../services/recommendationService.js';
 import { logAudit } from '../../utils/audit.js';
+import { parsePaginationParams, buildPaginationMeta } from '../../utils/pagination.js';
 
 const router = express.Router();
 
 router.use(authenticateUser);
 router.use(resolveTenant);
 
-// Helper: Generate sequential quote number e.g. DF360-2026-000001
-async function generateQuoteNumber(tenantId) {
+// Helper: Safely generate unique sequential quote number e.g. DF360-2026-000001
+async function generateQuoteNumber(tenantId, offset = 0, tx = prisma) {
   const currentYear = new Date().getFullYear();
-  const count = await prisma.quotation.count({
-    where: { tenantId },
+  const prefix = `DF360-${currentYear}-`;
+
+  const lastQuote = await tx.quotation.findFirst({
+    where: {
+      tenantId,
+      quoteNumber: { startsWith: prefix },
+    },
+    orderBy: { quoteNumber: 'desc' },
+    select: { quoteNumber: true },
   });
-  const seq = String(count + 1).padStart(6, '0');
-  return `DF360-${currentYear}-${seq}`;
+
+  let nextSeq = 1;
+  if (lastQuote && lastQuote.quoteNumber) {
+    const parts = lastQuote.quoteNumber.split('-');
+    if (parts.length >= 3) {
+      const parsed = parseInt(parts[2], 10);
+      if (!isNaN(parsed)) {
+        nextSeq = parsed + 1;
+      }
+    }
+  }
+
+  const seq = String(nextSeq + offset).padStart(6, '0');
+  return `${prefix}${seq}`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -28,7 +48,19 @@ async function generateQuoteNumber(tenantId) {
 // ─────────────────────────────────────────────────────────────────────────────
 router.post('/calculate', async (req, res) => {
   try {
-    const { items = [], customerTier = 'BRONZE' } = req.body;
+    const { items = [], customerTier = 'BRONZE', customerId } = req.body;
+
+    // Authoritative customer tier resolution from tenant database (Requirement 4)
+    let activeCustomerTier = customerTier;
+    if (customerId) {
+      const dbCustomer = await prisma.customer.findFirst({
+        where: { id: customerId, tenantId: req.tenantId },
+        select: { tier: true },
+      });
+      if (dbCustomer) {
+        activeCustomerTier = dbCustomer.tier;
+      }
+    }
 
     if (!items || items.length === 0) {
       return res.json({
@@ -48,25 +80,62 @@ router.post('/calculate', async (req, res) => {
       });
     }
 
-    // 1. Enrich items with authoritative database product pricing and cost
+    // 1. Enrich items with authoritative database product and variant pricing and cost
     const productIds = items.map((i) => i.productId).filter(Boolean);
-    const dbProducts = await prisma.product.findMany({
-      where: {
-        id: { in: productIds },
-        tenantId: req.tenantId,
-      },
-    });
+    const variantIds = items.map((i) => i.variantId).filter(Boolean);
+
+    const [dbProducts, dbVariants] = await Promise.all([
+      prisma.product.findMany({
+        where: { id: { in: productIds }, tenantId: req.tenantId },
+      }),
+      variantIds.length > 0
+        ? prisma.productVariant.findMany({
+            where: { id: { in: variantIds }, tenantId: req.tenantId },
+          })
+        : [],
+    ]);
 
     const productMap = new Map(dbProducts.map((p) => [p.id, p]));
+    const variantMap = new Map(dbVariants.map((v) => [v.id, v]));
 
     const enrichedItems = items.map((item) => {
       const dbProduct = productMap.get(item.productId);
+      const dbVariant = item.variantId ? variantMap.get(item.variantId) : null;
+
+      const unitPrice = dbVariant
+        ? parseFloat(dbVariant.unitPrice)
+        : dbProduct
+        ? parseFloat(dbProduct.unitPrice)
+        : parseFloat(item.unitPrice) || 0;
+
+      const costPrice = dbVariant
+        ? parseFloat(dbVariant.costPrice)
+        : dbProduct
+        ? parseFloat(dbProduct.costPrice)
+        : 0;
+
+      const productNameSnapshot = dbVariant
+        ? `${dbProduct ? dbProduct.name : item.name} (${dbVariant.name})`
+        : dbProduct
+        ? dbProduct.name
+        : item.name;
+
       return {
         ...item,
-        productNameSnapshot: dbProduct ? dbProduct.name : item.name,
+        variantId: dbVariant ? dbVariant.id : null,
+        variantSnapshot: dbVariant
+          ? {
+              id: dbVariant.id,
+              name: dbVariant.name,
+              sku: dbVariant.sku,
+              attributes: dbVariant.attributes,
+              stockQuantity: dbVariant.stockQuantity,
+            }
+          : null,
+        productNameSnapshot,
         productTypeSnapshot: dbProduct ? dbProduct.type : item.type || 'HARDWARE',
-        unitPrice: dbProduct ? parseFloat(dbProduct.unitPrice) : parseFloat(item.unitPrice) || 0,
-        costPrice: dbProduct ? parseFloat(dbProduct.costPrice) : 0,
+        unitPrice,
+        costPrice,
         taxRate: dbProduct ? parseFloat(dbProduct.taxRate) : 18.0,
         maxDiscountPercentage: dbProduct ? parseFloat(dbProduct.maxDiscountPercentage) : 15.0,
       };
@@ -79,7 +148,7 @@ router.post('/calculate', async (req, res) => {
     const risk = await evaluateQuotationRisk(
       req.tenantId,
       pricing.items,
-      customerTier,
+      activeCustomerTier,
       pricing.marginPercentage
     );
 
@@ -104,18 +173,27 @@ router.post('/calculate', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GET /api/quotations/my
-// Section 5: List Deals belonging to Current Sales Representative
+// Handler: Paginated, Filtered & Searchable Quotations
+// Supports: page, limit, status, customerId, search, riskLevel, date range, sorting
 // ─────────────────────────────────────────────────────────────────────────────
-router.get('/my', async (req, res) => {
+async function handleListQuotations(req, res) {
   try {
-    const { status, riskLevel, search } = req.query;
+    const {
+      status,
+      riskLevel,
+      search,
+      customerId,
+      startDate,
+      endDate,
+      sortBy = 'updatedAt',
+      sortOrder = 'desc',
+    } = req.query;
 
     const whereClause = {
       tenantId: req.tenantId,
     };
 
-    // If Sales Rep, show only their own deals (Section 33)
+    // Sales Reps can only view their own quotations (Requirement 1 & 14)
     if (req.user.role === 'SALES_REP') {
       whereClause.salesRepId = req.user.id;
     }
@@ -128,6 +206,16 @@ router.get('/my', async (req, res) => {
       whereClause.riskLevel = riskLevel;
     }
 
+    if (customerId) {
+      whereClause.customerId = customerId;
+    }
+
+    if (startDate || endDate) {
+      whereClause.createdAt = {};
+      if (startDate) whereClause.createdAt.gte = new Date(startDate);
+      if (endDate) whereClause.createdAt.lte = new Date(endDate);
+    }
+
     if (search) {
       whereClause.OR = [
         { quoteNumber: { contains: search, mode: 'insensitive' } },
@@ -136,32 +224,48 @@ router.get('/my', async (req, res) => {
       ];
     }
 
-    const quotes = await prisma.quotation.findMany({
-      where: whereClause,
-      include: {
-        customer: { select: { id: true, name: true, companyName: true, tier: true, email: true } },
-        salesRep: { select: { id: true, name: true, email: true } },
-        _count: { select: { items: true } },
-      },
-      orderBy: { updatedAt: 'desc' },
-    });
+    const { page, limit, skip, take } = parsePaginationParams(req.query);
+
+    const allowedSortFields = ['createdAt', 'updatedAt', 'totalAmount', 'quoteNumber', 'status'];
+    const safeSortBy = allowedSortFields.includes(sortBy) ? sortBy : 'updatedAt';
+    const safeSortOrder = sortOrder === 'asc' ? 'asc' : 'desc';
+
+    const [totalCount, quotes] = await Promise.all([
+      prisma.quotation.count({ where: whereClause }),
+      prisma.quotation.findMany({
+        where: whereClause,
+        include: {
+          customer: { select: { id: true, name: true, companyName: true, tier: true, email: true } },
+          salesRep: { select: { id: true, name: true, email: true } },
+          _count: { select: { items: true } },
+        },
+        skip,
+        take,
+        orderBy: { [safeSortBy]: safeSortOrder },
+      }),
+    ]);
 
     res.json({
       success: true,
       data: quotes,
+      pagination: buildPaginationMeta(totalCount, page, limit),
     });
   } catch (err) {
-    console.error('[QUOTES] My quotes fetch error:', err);
+    console.error('[QUOTES] Quotations list fetch error:', err);
     res.status(500).json({
       success: false,
       error: { code: 'INTERNAL_ERROR', message: 'Failed to retrieve quotations.' },
     });
   }
-});
+}
+
+// GET /api/quotations & GET /api/quotations/my
+router.get('/', handleListQuotations);
+router.get('/my', handleListQuotations);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/quotations/:id
-// Section 30: Detailed Quotation View
+// Section 30: Detailed Quotation View with Approvals Timeline
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/:id', async (req, res) => {
   try {
@@ -176,7 +280,11 @@ router.get('/:id', async (req, res) => {
         items: {
           include: {
             product: { select: { id: true, name: true, sku: true, isInventoryTracked: true } },
+            variant: true,
           },
+        },
+        approvals: {
+          orderBy: { createdAt: 'desc' },
         },
       },
     });
@@ -210,8 +318,122 @@ router.get('/:id', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// POST /api/quotations/:id/recalculate
+// Recalculate pricing, margins, discount ceiling violations & recommendations
+// ─────────────────────────────────────────────────────────────────────────────
+router.post('/:id/recalculate', async (req, res) => {
+  try {
+    const quote = await prisma.quotation.findFirst({
+      where: { id: req.params.id, tenantId: req.tenantId },
+      include: { customer: true, items: true },
+    });
+
+    if (!quote) {
+      return res.status(404).json({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'Quotation not found.' },
+      });
+    }
+
+    if (req.user.role === 'SALES_REP' && quote.salesRepId !== req.user.id) {
+      return res.status(403).json({
+        success: false,
+        error: { code: 'FORBIDDEN', message: 'Access denied to this quotation.' },
+      });
+    }
+
+    // Accept raw items from body if provided, otherwise use quote's current items
+    const rawItems = req.body.items && req.body.items.length > 0
+      ? req.body.items
+      : quote.items.map((it) => ({
+          productId: it.productId,
+          variantId: it.variantId || null,
+          quantity: it.quantity,
+          discountPercentage: parseFloat(it.discountPercentage),
+        }));
+
+    const productIds = rawItems.map((i) => i.productId).filter(Boolean);
+    const variantIds = rawItems.map((i) => i.variantId).filter(Boolean);
+
+    const [dbProducts, dbVariants] = await Promise.all([
+      prisma.product.findMany({
+        where: { id: { in: productIds }, tenantId: req.tenantId, isActive: true },
+      }),
+      variantIds.length > 0
+        ? prisma.productVariant.findMany({
+            where: { id: { in: variantIds }, tenantId: req.tenantId, isActive: true },
+          })
+        : [],
+    ]);
+
+    const productMap = new Map(dbProducts.map((p) => [p.id, p]));
+    const variantMap = new Map(dbVariants.map((v) => [v.id, v]));
+
+    const enrichedItems = rawItems.map((item) => {
+      const dbProduct = productMap.get(item.productId);
+      if (!dbProduct) {
+        throw new Error(`Product ${item.productId} not found or inactive in catalog.`);
+      }
+      const dbVariant = item.variantId ? variantMap.get(item.variantId) : null;
+      const unitPrice = dbVariant ? parseFloat(dbVariant.unitPrice) : parseFloat(dbProduct.unitPrice);
+      const costPrice = dbVariant ? parseFloat(dbVariant.costPrice || 0) : parseFloat(dbProduct.costPrice || 0);
+      const productNameSnapshot = dbVariant ? `${dbProduct.name} (${dbVariant.name})` : dbProduct.name;
+
+      return {
+        productId: dbProduct.id,
+        variantId: dbVariant ? dbVariant.id : null,
+        variantSnapshot: dbVariant
+          ? {
+              id: dbVariant.id,
+              name: dbVariant.name,
+              sku: dbVariant.sku,
+              attributes: dbVariant.attributes,
+              stockQuantity: dbVariant.stockQuantity,
+            }
+          : null,
+        productNameSnapshot,
+        productTypeSnapshot: dbProduct.type,
+        quantity: Math.max(1, parseInt(item.quantity, 10) || 1),
+        unitPrice,
+        costPrice,
+        taxRate: parseFloat(dbProduct.taxRate || 18.0),
+        discountPercentage: Math.min(100, Math.max(0, parseFloat(item.discountPercentage) || 0)),
+      };
+    });
+
+    const pricing = calculateQuotationTotals(enrichedItems);
+    const customerTier = quote.customer ? quote.customer.tier : 'BRONZE';
+    const risk = await evaluateQuotationRisk(
+      req.tenantId,
+      pricing.items,
+      customerTier,
+      pricing.marginPercentage
+    );
+    const recommendations = await getQuoteRecommendations(req.tenantId, pricing.items);
+
+    res.json({
+      success: true,
+      data: {
+        quotationId: quote.id,
+        quoteNumber: quote.quoteNumber,
+        customerTier,
+        pricing,
+        risk,
+        recommendations,
+      },
+    });
+  } catch (err) {
+    console.error('[QUOTES] Recalculate error:', err);
+    res.status(500).json({
+      success: false,
+      error: { code: 'RECALCULATE_ERROR', message: err.message || 'Failed to recalculate quotation.' },
+    });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // POST /api/quotations
-// Section 8 & 28: Create New Draft Quotation
+// Section 8 & 28: Create New Draft Quotation with Snapshotting & Audit
 // ─────────────────────────────────────────────────────────────────────────────
 router.post('/', async (req, res) => {
   try {
@@ -224,7 +446,7 @@ router.post('/', async (req, res) => {
       });
     }
 
-    // Verify customer exists within tenant
+    // Verify customer exists within current tenant (Requirement 2 & 5)
     const customer = await prisma.customer.findFirst({
       where: { id: customerId, tenantId: req.tenantId },
     });
@@ -236,34 +458,67 @@ router.post('/', async (req, res) => {
       });
     }
 
-    // Generate unique sequential quote number
-    const quoteNumber = await generateQuoteNumber(req.tenantId);
-
-    // Fetch authoritative product snapshots from DB
+    // Fetch authoritative active product & variant snapshots from DB (Requirement 3, 6, 7)
     const productIds = items.map((i) => i.productId).filter(Boolean);
-    const dbProducts = await prisma.product.findMany({
-      where: { id: { in: productIds }, tenantId: req.tenantId },
-    });
+    const variantIds = items.map((i) => i.variantId).filter(Boolean);
+
+    const [dbProducts, dbVariants] = await Promise.all([
+      prisma.product.findMany({
+        where: { id: { in: productIds }, tenantId: req.tenantId, isActive: true },
+      }),
+      variantIds.length > 0
+        ? prisma.productVariant.findMany({
+            where: { id: { in: variantIds }, tenantId: req.tenantId, isActive: true },
+          })
+        : [],
+    ]);
+
+    if (productIds.length > 0 && dbProducts.length !== productIds.length) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'INVALID_PRODUCT',
+          message: 'One or more selected products are invalid, inactive, or belong to another organization.',
+        },
+      });
+    }
+
     const productMap = new Map(dbProducts.map((p) => [p.id, p]));
+    const variantMap = new Map(dbVariants.map((v) => [v.id, v]));
 
     const enrichedItems = items.map((item) => {
       const dbProduct = productMap.get(item.productId);
       if (!dbProduct) {
         throw new Error(`Product ${item.productId} not found in catalog.`);
       }
+      const dbVariant = item.variantId ? variantMap.get(item.variantId) : null;
+      const unitPrice = dbVariant ? parseFloat(dbVariant.unitPrice) : parseFloat(dbProduct.unitPrice);
+      const costPrice = dbVariant ? parseFloat(dbVariant.costPrice || 0) : parseFloat(dbProduct.costPrice || 0);
+      const productNameSnapshot = dbVariant ? `${dbProduct.name} (${dbVariant.name})` : dbProduct.name;
+
       return {
         productId: dbProduct.id,
-        productNameSnapshot: dbProduct.name,
+        variantId: dbVariant ? dbVariant.id : null,
+        variantSnapshot: dbVariant
+          ? {
+              id: dbVariant.id,
+              name: dbVariant.name,
+              sku: dbVariant.sku,
+              attributes: dbVariant.attributes,
+              stockQuantity: dbVariant.stockQuantity,
+            }
+          : null,
+        productNameSnapshot,
         productTypeSnapshot: dbProduct.type,
         quantity: Math.max(1, parseInt(item.quantity, 10) || 1),
-        unitPrice: parseFloat(dbProduct.unitPrice),
-        costPrice: parseFloat(dbProduct.costPrice || 0),
+        unitPrice,
+        costPrice,
         taxRate: parseFloat(dbProduct.taxRate || 18.0),
         discountPercentage: Math.min(100, Math.max(0, parseFloat(item.discountPercentage) || 0)),
       };
     });
 
-    // Authoritative totals & risk
+    // Authoritative totals & risk (Requirement 8, 9, 10, 12)
     const pricing = calculateQuotationTotals(enrichedItems);
     const risk = await evaluateQuotationRisk(
       req.tenantId,
@@ -272,62 +527,86 @@ router.post('/', async (req, res) => {
       pricing.marginPercentage
     );
 
-    // Create quotation & items in atomic transaction
-    const newQuote = await prisma.$transaction(async (tx) => {
-      const quote = await tx.quotation.create({
-        data: {
-          tenantId: req.tenantId,
-          quoteNumber,
-          customerId: customer.id,
-          salesRepId: req.user.id,
-          status: 'DRAFT',
-          approvalStatus: 'NONE',
-          subtotal: pricing.subtotal,
-          discountAmount: pricing.discountAmount,
-          taxAmount: pricing.taxAmount,
-          totalAmount: pricing.totalAmount,
-          costAmount: pricing.costAmount,
-          marginAmount: pricing.marginAmount,
-          marginPercentage: pricing.marginPercentage,
-          riskScore: risk.riskScore,
-          riskLevel: risk.riskLevel,
-          riskReasons: risk.reasons,
-          requiredApproverRole: risk.requiredApproverRole,
-          notes,
-          items: {
-            create: pricing.items.map((it) => ({
-              productId: it.productId,
-              productNameSnapshot: it.productNameSnapshot,
-              productTypeSnapshot: it.productTypeSnapshot,
-              quantity: it.quantity,
-              unitPrice: it.unitPrice,
-              costPrice: it.costPrice,
-              discountPercentage: it.discountPercentage,
-              discountAmount: it.discountAmount,
-              taxAmount: it.taxAmount,
-              lineTotal: it.lineTotal,
-              marginAmount: it.marginAmount,
-              marginPercentage: it.marginPercentage,
-            })),
-          },
-        },
-        include: {
-          items: true,
-          customer: true,
-        },
-      });
+    // Create quotation & items with concurrency-safe retry on P2002
+    let newQuote = null;
+    let attempts = 0;
+    while (!newQuote && attempts < 4) {
+      try {
+        const quoteNumber = await generateQuoteNumber(req.tenantId, attempts);
+        newQuote = await prisma.$transaction(async (tx) => {
+          const quote = await tx.quotation.create({
+            data: {
+              tenantId: req.tenantId,
+              quoteNumber,
+              customerId: customer.id,
+              salesRepId: req.user.id,
+              status: 'DRAFT',
+              approvalStatus: 'NONE',
+              subtotal: pricing.subtotal,
+              discountAmount: pricing.discountAmount,
+              taxAmount: pricing.taxAmount,
+              totalAmount: pricing.totalAmount,
+              costAmount: pricing.costAmount,
+              marginAmount: pricing.marginAmount,
+              marginPercentage: pricing.marginPercentage,
+              riskScore: risk.riskScore,
+              riskLevel: risk.riskLevel,
+              riskReasons: risk.reasons,
+              requiredApproverRole: risk.requiredApproverRole,
+              notes,
+              items: {
+                create: pricing.items.map((it) => ({
+                  productId: it.productId,
+                  variantId: it.variantId || null,
+                  variantSnapshot: it.variantSnapshot || null,
+                  productNameSnapshot: it.productNameSnapshot,
+                  productTypeSnapshot: it.productTypeSnapshot,
+                  quantity: it.quantity,
+                  unitPrice: it.unitPrice,
+                  costPrice: it.costPrice,
+                  discountPercentage: it.discountPercentage,
+                  discountAmount: it.discountAmount,
+                  taxAmount: it.taxAmount,
+                  lineTotal: it.lineTotal,
+                  marginAmount: it.marginAmount,
+                  marginPercentage: it.marginPercentage,
+                })),
+              },
+            },
+            include: {
+              items: true,
+              customer: true,
+            },
+          });
 
-      await logAudit({
-        tenantId: req.tenantId,
-        userId: req.user.id,
-        action: 'QUOTE_CREATED',
-        entityType: 'QUOTATION',
-        entityId: quote.id,
-        metadata: { quoteNumber, totalAmount: pricing.totalAmount, riskLevel: risk.riskLevel },
-      });
+          await logAudit({
+            tenantId: req.tenantId,
+            userId: req.user.id,
+            action: 'QUOTE_CREATED',
+            entityType: 'QUOTATION',
+            entityId: quote.id,
+            metadata: { quoteNumber, totalAmount: pricing.totalAmount, riskLevel: risk.riskLevel },
+          });
 
-      return quote;
-    });
+          await logAudit({
+            tenantId: req.tenantId,
+            userId: req.user.id,
+            action: 'RISK_EVALUATED',
+            entityType: 'QUOTATION',
+            entityId: quote.id,
+            metadata: { quoteNumber, riskScore: risk.riskScore, riskLevel: risk.riskLevel },
+          });
+
+          return quote;
+        });
+      } catch (err) {
+        if (err.code === 'P2002' && attempts < 3) {
+          attempts++;
+          continue;
+        }
+        throw err;
+      }
+    }
 
     console.log(`📝 [CPQ] Created Quotation ${newQuote.quoteNumber} (Total: ₹${pricing.totalAmount})`);
 
@@ -362,7 +641,7 @@ router.put('/:id', async (req, res) => {
       });
     }
 
-    // Ownership check
+    // Ownership check: sales reps can only edit their own draft quotes
     if (req.user.role === 'SALES_REP' && quote.salesRepId !== req.user.id) {
       return res.status(403).json({
         success: false,
@@ -383,31 +662,74 @@ router.put('/:id', async (req, res) => {
 
     const { customerId, items = [], notes } = req.body;
 
-    // Customer
+    // Customer validation
     const activeCustomerId = customerId || quote.customerId;
     const customer = await prisma.customer.findFirst({
       where: { id: activeCustomerId, tenantId: req.tenantId },
     });
 
-    // Authoritative product lookup
+    if (!customer) {
+      return res.status(404).json({
+        success: false,
+        error: { code: 'CUSTOMER_NOT_FOUND', message: 'Customer not found in organization.' },
+      });
+    }
+
+    // Authoritative active product & variant lookup
     const productIds = items.map((i) => i.productId).filter(Boolean);
-    const dbProducts = await prisma.product.findMany({
-      where: { id: { in: productIds }, tenantId: req.tenantId },
-    });
+    const variantIds = items.map((i) => i.variantId).filter(Boolean);
+
+    const [dbProducts, dbVariants] = await Promise.all([
+      prisma.product.findMany({
+        where: { id: { in: productIds }, tenantId: req.tenantId, isActive: true },
+      }),
+      variantIds.length > 0
+        ? prisma.productVariant.findMany({
+            where: { id: { in: variantIds }, tenantId: req.tenantId, isActive: true },
+          })
+        : [],
+    ]);
+
+    if (productIds.length > 0 && dbProducts.length !== productIds.length) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'INVALID_PRODUCT',
+          message: 'One or more selected products are invalid, inactive, or belong to another organization.',
+        },
+      });
+    }
+
     const productMap = new Map(dbProducts.map((p) => [p.id, p]));
+    const variantMap = new Map(dbVariants.map((v) => [v.id, v]));
 
     const enrichedItems = items.map((item) => {
       const dbProduct = productMap.get(item.productId);
       if (!dbProduct) {
         throw new Error(`Product ${item.productId} not found.`);
       }
+      const dbVariant = item.variantId ? variantMap.get(item.variantId) : null;
+      const unitPrice = dbVariant ? parseFloat(dbVariant.unitPrice) : parseFloat(dbProduct.unitPrice);
+      const costPrice = dbVariant ? parseFloat(dbVariant.costPrice || 0) : parseFloat(dbProduct.costPrice || 0);
+      const productNameSnapshot = dbVariant ? `${dbProduct.name} (${dbVariant.name})` : dbProduct.name;
+
       return {
         productId: dbProduct.id,
-        productNameSnapshot: dbProduct.name,
+        variantId: dbVariant ? dbVariant.id : null,
+        variantSnapshot: dbVariant
+          ? {
+              id: dbVariant.id,
+              name: dbVariant.name,
+              sku: dbVariant.sku,
+              attributes: dbVariant.attributes,
+              stockQuantity: dbVariant.stockQuantity,
+            }
+          : null,
+        productNameSnapshot,
         productTypeSnapshot: dbProduct.type,
         quantity: Math.max(1, parseInt(item.quantity, 10) || 1),
-        unitPrice: parseFloat(dbProduct.unitPrice),
-        costPrice: parseFloat(dbProduct.costPrice || 0),
+        unitPrice,
+        costPrice,
         taxRate: parseFloat(dbProduct.taxRate || 18.0),
         discountPercentage: Math.min(100, Math.max(0, parseFloat(item.discountPercentage) || 0)),
       };
@@ -444,9 +766,12 @@ router.put('/:id', async (req, res) => {
           riskReasons: risk.reasons,
           requiredApproverRole: risk.requiredApproverRole,
           notes: notes !== undefined ? notes : quote.notes,
+          version: { increment: 1 },
           items: {
             create: pricing.items.map((it) => ({
               productId: it.productId,
+              variantId: it.variantId || null,
+              variantSnapshot: it.variantSnapshot || null,
               productNameSnapshot: it.productNameSnapshot,
               productTypeSnapshot: it.productTypeSnapshot,
               quantity: it.quantity,
@@ -473,6 +798,15 @@ router.put('/:id', async (req, res) => {
         metadata: { quoteNumber: quote.quoteNumber, totalAmount: pricing.totalAmount },
       });
 
+      await logAudit({
+        tenantId: req.tenantId,
+        userId: req.user.id,
+        action: 'RISK_EVALUATED',
+        entityType: 'QUOTATION',
+        entityId: quote.id,
+        metadata: { quoteNumber: quote.quoteNumber, riskScore: risk.riskScore, riskLevel: risk.riskLevel },
+      });
+
       return updated;
     });
 
@@ -491,7 +825,7 @@ router.put('/:id', async (req, res) => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // POST /api/quotations/:id/submit
-// Section 25, 26, 44 & 45: Submit Quote & Enforce Non-Bypassable Approvals
+// Section 25, 26, 44 & 45: Submit Quote, Atomic Concurrency & Enforce Non-Bypassable Approvals
 // ─────────────────────────────────────────────────────────────────────────────
 router.post('/:id/submit', async (req, res) => {
   try {
@@ -510,7 +844,7 @@ router.post('/:id/submit', async (req, res) => {
       });
     }
 
-    // Ownership check
+    // Ownership check: sales reps can only submit their own quotations
     if (req.user.role === 'SALES_REP' && quote.salesRepId !== req.user.id) {
       return res.status(403).json({
         success: false,
@@ -580,10 +914,14 @@ router.post('/:id/submit', async (req, res) => {
       } approval due to discount ceiling rules.`;
     }
 
-    // Atomic submission transaction (Section 44)
+    // Atomic submission transaction with conditional update (Requirement 17, 18, 22)
     const submittedQuote = await prisma.$transaction(async (tx) => {
-      const updated = await tx.quotation.update({
-        where: { id: quote.id },
+      const updateResult = await tx.quotation.updateMany({
+        where: {
+          id: quote.id,
+          tenantId: req.tenantId,
+          status: { in: ['DRAFT', 'RETURNED_FOR_REVISION', 'REJECTED'] },
+        },
         data: {
           status: finalStatus,
           approvalStatus,
@@ -598,7 +936,24 @@ router.post('/:id/submit', async (req, res) => {
           riskLevel: risk.riskLevel,
           riskReasons: risk.reasons,
           requiredApproverRole: risk.requiredApproverRole,
+          version: { increment: 1 },
         },
+      });
+
+      // If another concurrent request already transitioned this quote, return current quote safely
+      if (updateResult.count === 0) {
+        return await tx.quotation.findFirst({
+          where: { id: quote.id },
+          include: {
+            customer: true,
+            items: true,
+            salesRep: { select: { id: true, name: true, email: true } },
+          },
+        });
+      }
+
+      const updated = await tx.quotation.findFirst({
+        where: { id: quote.id },
         include: {
           customer: true,
           items: true,
@@ -620,6 +975,20 @@ router.post('/:id/submit', async (req, res) => {
             discountAmountAtDecision: pricing.discountAmount,
           },
         });
+
+        await logAudit({
+          tenantId: req.tenantId,
+          userId: req.user.id,
+          action: 'APPROVAL_REQUESTED',
+          entityType: 'QUOTATION',
+          entityId: quote.id,
+          metadata: {
+            quoteNumber: quote.quoteNumber,
+            requiredApproverRole: risk.requiredApproverRole,
+            riskScore: risk.riskScore,
+            approvalStatus,
+          },
+        });
       }
 
       await logAudit({
@@ -635,6 +1004,20 @@ router.post('/:id/submit', async (req, res) => {
           approvalRequired: risk.approvalRequired,
           totalAmount: pricing.totalAmount,
           isResubmission,
+        },
+      });
+
+      await logAudit({
+        tenantId: req.tenantId,
+        userId: req.user.id,
+        action: 'RISK_EVALUATED',
+        entityType: 'QUOTATION',
+        entityId: quote.id,
+        metadata: {
+          quoteNumber: quote.quoteNumber,
+          riskScore: risk.riskScore,
+          riskLevel: risk.riskLevel,
+          reasons: risk.reasons,
         },
       });
 
@@ -658,6 +1041,7 @@ router.post('/:id/submit', async (req, res) => {
     });
   }
 });
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // POST /api/quotations/:id/send-to-customer
@@ -695,6 +1079,7 @@ async function handleSendToCustomer(req, res) {
           status: 'SENT_TO_CUSTOMER',
           validUntil: validUntilDate,
           notes: notes !== undefined ? notes : quote.notes,
+          version: { increment: 1 },
         },
         include: {
           customer: true,

@@ -127,6 +127,8 @@ export default function CustomerDealRoom({ quoteId, onBack, initialNegotiate = f
           quotationItemId: selectedItemId,
           proposedDiscount: parseFloat(proposedDiscount),
           reason: discountReason,
+          version: quote.version,
+          expectedVersion: quote.version,
         }),
       });
       if (res.success) {
@@ -214,7 +216,7 @@ export default function CustomerDealRoom({ quoteId, onBack, initialNegotiate = f
       setSubmittingConfirm(true);
       const res = await fetchWithAuth(`/api/customer/quotes/${quoteId}/confirm`, {
         method: 'POST',
-        body: JSON.stringify({ termsAccepted: true }),
+        body: JSON.stringify({ termsAccepted: true, version: quote.version, expectedVersion: quote.version }),
       });
       if (res.success) {
         setConfirmationSuccess(true);
@@ -376,6 +378,66 @@ export default function CustomerDealRoom({ quoteId, onBack, initialNegotiate = f
           </div>
         </div>
       </div>
+
+      {/* ── Revised Quotation Banner (Before / After Showcase) ────── */}
+      {quote.previousTerms && (
+        <div className="bg-gradient-to-r from-emerald-50 via-teal-50 to-emerald-50 border-2 border-emerald-300 rounded-2xl p-5 shadow-xs">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-emerald-200 pb-3 mb-4">
+            <div className="flex items-center gap-2">
+              <span className="flex h-3 w-3 relative">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-600"></span>
+              </span>
+              <h3 className="text-sm font-black text-emerald-900 uppercase tracking-wider flex items-center gap-2">
+                <span>Revised Quotation (Version #{quote.version})</span>
+              </h3>
+            </div>
+            <span className="text-xs font-bold px-3 py-1 bg-emerald-100 text-emerald-800 rounded-full border border-emerald-200">
+              Updated Terms Approved by Seller
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 text-xs">
+            <div className="bg-white/80 backdrop-blur-xs p-3 rounded-xl border border-emerald-200">
+              <p className="text-[11px] font-bold text-slate-500 uppercase">Previous Total</p>
+              <p className="text-sm font-bold text-slate-500 line-through mt-0.5">
+                {currency}{quote.previousTerms.totalAmount?.toLocaleString()}
+              </p>
+            </div>
+
+            <div className="bg-white/80 backdrop-blur-xs p-3 rounded-xl border border-emerald-300 ring-2 ring-emerald-400/20">
+              <p className="text-[11px] font-bold text-emerald-700 uppercase">Revised Total</p>
+              <p className="text-base font-black text-emerald-800 mt-0.5">
+                {currency}{quote.financials?.totalAmount?.toLocaleString()}
+              </p>
+            </div>
+
+            <div className="bg-white/80 backdrop-blur-xs p-3 rounded-xl border border-emerald-200">
+              <p className="text-[11px] font-bold text-slate-500 uppercase">Previous Savings</p>
+              <p className="text-sm font-semibold text-slate-600 mt-0.5">
+                {currency}{quote.previousTerms.discountAmount?.toLocaleString()}
+              </p>
+            </div>
+
+            <div className="bg-white/80 backdrop-blur-xs p-3 rounded-xl border border-emerald-200">
+              <p className="text-[11px] font-bold text-emerald-700 uppercase">Total New Savings</p>
+              <p className="text-sm font-black text-emerald-800 mt-0.5">
+                {currency}{quote.financials?.discountAmount?.toLocaleString()}
+              </p>
+            </div>
+          </div>
+
+          {quote.revisionNotes && (
+            <div className="mt-3 p-3 bg-white/90 rounded-xl border border-emerald-200 text-xs text-emerald-950 flex items-start gap-2">
+              <Sparkles size={16} className="text-emerald-700 shrink-0 mt-0.5" />
+              <div>
+                <span className="font-bold text-emerald-900">Seller Note: </span>
+                <span>{quote.revisionNotes}</span>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── Order Summary Table (Strict Data Masking) ────────────── */}
       <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs">

@@ -150,11 +150,11 @@ async function handleCustomerRegistration(req, res) {
   try {
     const { name, email, password, companyName, tenantId, phone } = req.body;
 
-    if (!name || !email || !password) {
+    if (!name || !email || !password || !companyName) {
       return res.status(400).json({
         success: false,
-        error: { code: 'VALIDATION_ERROR', message: 'Full name, email address, and password are required.' },
-        message: 'Full name, email address, and password are required.',
+        error: { code: 'VALIDATION_ERROR', message: 'Full name, email address, password, and company name are required.' },
+        message: 'Full name, email address, password, and company name are required.',
       });
     }
 
@@ -208,7 +208,7 @@ async function handleCustomerRegistration(req, res) {
         name: name.trim(),
         email: cleanEmail,
         passwordHash,
-        companyName: companyName?.trim() || name.trim(),
+        companyName: companyName.trim(),
         tier: 'BRONZE',
         currency: org.currency || 'INR',
         status: 'ACTIVE',

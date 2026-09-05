@@ -20,6 +20,8 @@ import ProductCatalog from './components/admin/ProductCatalog';
 import DiscountRulesView from './components/admin/DiscountRulesView';
 import ApprovalRulesView from './components/admin/ApprovalRulesView';
 import AuditActivityView from './components/admin/AuditActivityView';
+import AdminCustomersView from './components/admin/AdminCustomersView';
+import WarehouseAdminView from './components/admin/WarehouseAdminView';
 
 // Sales Representative Portal Components
 import SalesLayout from './components/sales/SalesLayout';
@@ -159,9 +161,11 @@ function AdminPortalWrapper() {
         <Route path="dashboard" element={<AdminDashboard onNavigate={handleSelectTab} />} />
         <Route path="organization" element={<OrganizationView />} />
         <Route path="team" element={<TeamManagement />} />
+        <Route path="customers" element={<AdminCustomersView />} />
         <Route path="products" element={<ProductCatalog />} />
         <Route path="discount-rules" element={<DiscountRulesView />} />
         <Route path="approval-rules" element={<ApprovalRulesView />} />
+        <Route path="warehouses" element={<WarehouseAdminView />} />
         <Route path="audit" element={<AuditActivityView />} />
         <Route path="*" element={<Navigate to="dashboard" replace />} />
       </Routes>

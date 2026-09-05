@@ -269,7 +269,7 @@ export default function CustomerDashboard({ onOpenQuote, onViewAllQuotes }) {
                     <tr key={q.id} className="hover:bg-slate-50 transition-colors">
                       <td className="px-5 py-3.5 font-mono font-bold text-slate-900">{q.quoteNumber}</td>
                       <td className="px-5 py-3.5 text-slate-700 font-medium">
-                        {q.seller?.organizationName || 'TechWorld Solutions'}
+                        {q.seller?.organizationName || q.tenant?.name || '\u2014'}
                       </td>
                       <td className="px-5 py-3.5 text-slate-500">
                         {new Date(q.createdAt).toLocaleDateString()}

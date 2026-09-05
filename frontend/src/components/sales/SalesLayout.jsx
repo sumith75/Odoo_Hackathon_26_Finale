@@ -56,7 +56,7 @@ export default function SalesLayout({ activeTab, onSelectTab, onNewQuote, childr
               <span className="text-xs font-medium text-slate-500 mr-2">Organization:</span>
               <span className="text-xs font-bold text-slate-800 bg-slate-100 px-2.5 py-1 rounded-md border border-slate-200 flex items-center gap-1.5">
                 <Building2 size={13} className="text-green-700" />
-                {user?.organizationName || user?.organization?.name || 'TechWorld Solutions'}
+                {user?.organizationName || user?.organization?.name || '—'}
               </span>
               <span className="ml-2 text-[10px] font-bold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
                 {user?.currency || 'INR'}

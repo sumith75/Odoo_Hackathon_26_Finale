@@ -81,6 +81,7 @@ model Organization {
 
   users         User[]
   products      Product[]
+  productVariants ProductVariant[]
   discountRules DiscountRule[]
   approvalRules ApprovalRule[]
   auditLogs     AuditLog[]
@@ -179,6 +180,7 @@ model Product {
   taxRate               Decimal     @default(0) @map("tax_rate") @db.Decimal(5, 2)
   maxDiscountPercentage Decimal     @default(0) @map("max_discount_percentage") @db.Decimal(5, 2)
   isInventoryTracked    Boolean     @default(false) @map("is_inventory_tracked")
+  attributes            Json?       // E.g. [ { "name": "Color", "values": ["Space Black", "Silver"] }, ... ]
   isActive              Boolean     @default(true) @map("is_active")
   createdAt             DateTime    @default(now()) @map("created_at")
   updatedAt             DateTime    @default(now()) @updatedAt @map("updated_at")
@@ -189,12 +191,42 @@ model Product {
   warehouseAllocations WarehouseAllocation[]
   subscriptions        Subscription[]
   invoiceItems         InvoiceItem[]
+  variants             ProductVariant[]
 
   @@unique([tenantId, sku])
   @@index([tenantId])
   @@index([tenantId, type])
   @@index([tenantId, isActive])
   @@map("products")
+}
+
+// ============================================================
+// PRODUCT VARIANTS (Features, Options & Authoritative Stock in DB)
+// ============================================================
+
+model ProductVariant {
+  id            String   @id @default(uuid())
+  tenantId      String   @map("tenant_id")
+  productId     String   @map("product_id")
+  name          String
+  sku           String
+  attributes    Json     // E.g. { "Color": "Space Black", "RAM": "16GB", "Storage": "256GB" }
+  unitPrice     Decimal  @map("unit_price") @db.Decimal(12, 2)
+  costPrice     Decimal  @default(0) @map("cost_price") @db.Decimal(12, 2)
+  stockQuantity Int      @default(0) @map("stock_quantity") // Authoritative stock count per variant
+  isActive      Boolean  @default(true) @map("is_active")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @default(now()) @updatedAt @map("updated_at")
+
+  tenant         Organization    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  product        Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  quotationItems QuotationItem[]
+
+  @@unique([tenantId, sku])
+  @@index([tenantId])
+  @@index([productId])
+  @@index([tenantId, productId])
+  @@map("product_variants")
 }
 
 // ============================================================
@@ -259,6 +291,7 @@ model Quotation {
   status               QuotationStatus @default(DRAFT)
   approvalStatus       ApprovalStatus  @default(NONE) @map("approval_status")
   requiredApproverRole String?         @map("required_approver_role")
+  version              Int             @default(1)
   subtotal             Decimal         @default(0) @db.Decimal(12, 2)
   discountAmount       Decimal         @default(0) @map("discount_amount") @db.Decimal(12, 2)
   taxAmount            Decimal         @default(0) @map("tax_amount") @db.Decimal(12, 2)
@@ -316,6 +349,8 @@ model QuotationItem {
   discountPercentage  Decimal     @default(0) @map("discount_percentage") @db.Decimal(5, 2)
   discountAmount      Decimal     @default(0) @map("discount_amount") @db.Decimal(12, 2)
   taxAmount           Decimal     @default(0) @map("tax_amount") @db.Decimal(12, 2)
+  variantId           String?               @map("variant_id")
+  variantSnapshot     Json?                 @map("variant_snapshot")
   lineTotal            Decimal               @default(0) @map("line_total") @db.Decimal(12, 2)
   marginAmount         Decimal               @default(0) @map("margin_amount") @db.Decimal(12, 2)
   marginPercentage     Decimal               @default(0) @map("margin_percentage") @db.Decimal(5, 2)
@@ -325,6 +360,7 @@ model QuotationItem {
 
   quotation            Quotation             @relation(fields: [quotationId], references: [id], onDelete: Cascade)
   product              Product               @relation(fields: [productId], references: [id], onDelete: Restrict)
+  variant              ProductVariant?       @relation(fields: [variantId], references: [id], onDelete: SetNull)
   comments             QuoteComment[]
   changeRequests       QuoteChangeRequest[]
   negotiationProposals NegotiationProposal[]
@@ -333,6 +369,7 @@ model QuotationItem {
 
   @@index([quotationId])
   @@index([productId])
+  @@index([variantId])
   @@map("quotation_items")
 }
 

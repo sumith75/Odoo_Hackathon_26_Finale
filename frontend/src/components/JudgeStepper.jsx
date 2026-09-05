@@ -5,21 +5,21 @@ import {
 } from 'lucide-react';
 
 export const STEPS = [
-  { id: 1, title: '1. Login', role: 'admin', desc: 'Persona Switcher & Master Config' },
-  { id: 2, title: '2. Admin Config', role: 'admin', desc: 'Set discount thresholds & stock' },
-  { id: 3, title: '3. Create Quote', role: 'sales', desc: 'Select customer & add 25 servers' },
-  { id: 4, title: '4. Excessive Discount', role: 'sales', desc: 'Apply 30% discount (> 15% limit)' },
-  { id: 5, title: '5. Auto-Detect Risk', role: 'sales', desc: 'System flags HIGH_RISK & locks' },
-  { id: 6, title: '6. Manager Approve', role: 'manager', desc: 'Review scorecard & approve' },
-  { id: 7, title: '7. Upsell Offer', role: 'sales', desc: '1-click add 24/7 SLA to boost margin' },
-  { id: 8, title: '8. Split Warehouse', role: 'warehouse', desc: 'Auto-split: 15 North + 10 South' },
-  { id: 9, title: '9. Hybrid Billing', role: 'billing', desc: 'Capex one-time + Opex MRR' },
-  { id: 10, title: '10. Negotiate', role: 'customer', desc: 'Customer requests 32% discount' },
-  { id: 11, title: '11. Auto Re-Check', role: 'customer', desc: 'System catches variance & re-locks' },
-  { id: 12, title: '12. Approve Again', role: 'manager', desc: 'Manager approves counter-offer' },
-  { id: 13, title: '13. Confirm', role: 'customer', desc: 'Customer digitally signs order' },
-  { id: 14, title: '14. Payment', role: 'billing', desc: 'Instant settlement & dispatch' },
-  { id: 15, title: '15. Dashboard', role: 'dashboard', desc: 'Deal health & audit timeline' }
+  { id: 1, title: '1. Google Login', role: 'admin', desc: 'Google Workspace Sign-In & 5 Roles' },
+  { id: 2, title: '2. Admin Config', role: 'admin', desc: 'Hardware 15%, Service 10%, Sub 5%' },
+  { id: 3, title: '3. Create Quote', role: 'sales', desc: 'Acme: 10 Laptops, 1 Service, 10 Support' },
+  { id: 4, title: '4. Apply 18% Disc', role: 'sales', desc: 'Service 18% exceeds 10% policy' },
+  { id: 5, title: '5. Auto-Detect Risk', role: 'sales', desc: 'System flags HIGH RISK (82) & locks' },
+  { id: 6, title: '6. Manager Approve', role: 'manager', desc: 'Manager reviews excess 8% & approves' },
+  { id: 7, title: '7. Smart Upsell', role: 'sales', desc: 'System recommends add-on opportunities' },
+  { id: 8, title: '8. Split Stock', role: 'warehouse', desc: 'Auto-allocates: Bangalore 8, Hyderabad 2' },
+  { id: 9, title: '9. Customer Portal', role: 'customer', desc: 'Acme customer reviews official quote' },
+  { id: 10, title: '10. Negotiate 20%', role: 'customer', desc: 'Customer counter-offers 20% discount' },
+  { id: 11, title: '11. Re-Check Risk', role: 'customer', desc: '20% > 15% limit -> Re-locks for approval' },
+  { id: 12, title: '12. Manager Concession', role: 'manager', desc: 'Manager approves counter-offer' },
+  { id: 13, title: '13. Confirm Quote', role: 'customer', desc: 'Customer confirms (CUSTOMER_CONFIRMED)' },
+  { id: 14, title: '14. Hybrid Invoice', role: 'billing', desc: 'Capex ₹6,56,400 + MRR ₹28,500/mo' },
+  { id: 15, title: '15. Settle & Health', role: 'dashboard', desc: 'Payment PAID & Deal Health: HEALTHY' }
 ];
 
 export default function JudgeStepper({ currentStep, onSelectStep, onRunNextStep, isAutoPlaying, onToggleAutoPlay }) {

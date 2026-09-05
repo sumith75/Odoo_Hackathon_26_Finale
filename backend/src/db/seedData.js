@@ -3,31 +3,31 @@
 export const initialUsers = [
   {
     id: 'user-admin',
-    name: 'Sarah Admin (Systems Admin)',
+    name: 'Admin',
     email: 'admin@dealflow360.com',
     role: 'ADMIN'
   },
   {
     id: 'user-sales',
-    name: 'Alex Morgan (Enterprise AE)',
+    name: 'Sales Rep',
     email: 'sales@dealflow360.com',
     role: 'SALES_REP'
   },
   {
     id: 'user-manager',
-    name: 'Vikram Mehta (VP Sales / Approver)',
+    name: 'Sales Manager',
     email: 'manager@dealflow360.com',
     role: 'SALES_MANAGER'
   },
   {
     id: 'user-finance',
-    name: 'Priya Sharma (Finance & Operations Controller)',
+    name: 'Finance / Operations',
     email: 'finance@dealflow360.com',
     role: 'FINANCE_OPERATIONS'
   },
   {
     id: 'user-customer',
-    name: 'Rajesh Kumar (Procurement Lead, Acme Corp)',
+    name: 'Customer',
     email: 'customer@acme.com',
     role: 'CUSTOMER'
   }

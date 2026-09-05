@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Settings, ShoppingCart, ShieldCheck, UserCheck, Warehouse, 
-  Receipt, BarChart3, RotateCcw, Database, Sparkles, Play, LogIn, User
+  Receipt, BarChart3, RotateCcw, Database, Sparkles, Play, LogOut, User, Check
 } from 'lucide-react';
 
+import { AuthProvider, useAuth, GOOGLE_PERSONAS } from './context/AuthContext';
+import LoginView from './components/LoginView';
 import JudgeStepper from './components/JudgeStepper';
 import AdminView from './components/AdminView';
 import SalesRepCPQView from './components/SalesRepCPQView';
@@ -13,22 +15,21 @@ import WarehouseFulfillmentView from './components/WarehouseFulfillmentView';
 import BillingCheckoutView from './components/BillingCheckoutView';
 import DashboardView from './components/DashboardView';
 
-export const DEMO_ROLES = [
-  { role: 'ADMIN', name: 'Admin', email: 'admin@dealflow360.com', tab: 'admin', icon: Settings, label: 'Admin (Rules & Catalog)' },
-  { role: 'SALES_REP', name: 'Sales Rep', email: 'sales@dealflow360.com', tab: 'sales', icon: ShoppingCart, label: 'Sales Rep (CPQ Studio)' },
-  { role: 'SALES_MANAGER', name: 'Sales Manager', email: 'manager@dealflow360.com', tab: 'manager', icon: ShieldCheck, label: 'Manager (Approvals)' },
-  { role: 'FINANCE_OPERATIONS', name: 'Finance / Ops', email: 'finance@dealflow360.com', tab: 'operations', icon: Warehouse, label: 'Finance / Ops (Warehouse & Billing)' },
-  { role: 'CUSTOMER', name: 'Customer (Acme)', email: 'customer@acme.com', tab: 'customer', icon: UserCheck, label: 'Customer (Deal Room)' }
-];
-
-export default function App() {
-  const [currentUser, setCurrentUser] = useState(DEMO_ROLES[1]); // Default to Sales Rep
+function DealFlowApp() {
+  const { user, isAuthenticated, isLoading, logout, switchRole, personas } = useAuth();
   const [activeTab, setActiveTab] = useState('sales');
   const [currentJudgeStep, setCurrentJudgeStep] = useState(1);
   const [isAutoPlaying, setIsAutoPlaying] = useState(false);
   const [activeQuoteId, setActiveQuoteId] = useState(null);
   const [dbStatus, setDbStatus] = useState(null);
   const [prefillExcessive, setPrefillExcessive] = useState(false);
+
+  // Sync activeTab when user logs in or switches role
+  useEffect(() => {
+    if (user?.tab) {
+      setActiveTab(user.tab);
+    }
+  }, [user?.role]);
 
   // Fetch health & db status on load
   useEffect(() => {
@@ -41,17 +42,8 @@ export default function App() {
   }, []);
 
   const handleRoleSwitch = async (roleObj) => {
-    setCurrentUser(roleObj);
+    await switchRole(roleObj);
     setActiveTab(roleObj.tab);
-    try {
-      await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ role: roleObj.role })
-      });
-    } catch (e) {
-      console.error('Auth sync error:', e);
-    }
   };
 
   // Map 15-step ID to active view tab & role
@@ -59,62 +51,52 @@ export default function App() {
     setCurrentJudgeStep(stepId);
     switch (stepId) {
       case 1:
-        handleRoleSwitch(DEMO_ROLES[0]); // Admin
-        setActiveTab('admin');
-        break;
       case 2:
-        handleRoleSwitch(DEMO_ROLES[0]); // Admin
+        handleRoleSwitch(personas[0]); // Admin
         setActiveTab('admin');
         break;
       case 3:
-        handleRoleSwitch(DEMO_ROLES[1]); // Sales Rep
+        handleRoleSwitch(personas[1]); // Sales Rep
         setActiveTab('sales');
         setPrefillExcessive(false);
         break;
       case 4:
-        handleRoleSwitch(DEMO_ROLES[1]); // Sales Rep
-        setActiveTab('sales');
-        setPrefillExcessive(true);
-        break;
       case 5:
-        handleRoleSwitch(DEMO_ROLES[1]); // Sales Rep
+        handleRoleSwitch(personas[1]); // Sales Rep
         setActiveTab('sales');
         setPrefillExcessive(true);
         break;
       case 6:
-        handleRoleSwitch(DEMO_ROLES[2]); // Manager
+        handleRoleSwitch(personas[2]); // Manager
         setActiveTab('manager');
         break;
       case 7:
-        handleRoleSwitch(DEMO_ROLES[1]); // Sales Rep
+        handleRoleSwitch(personas[1]); // Sales Rep
         setActiveTab('sales');
         break;
       case 8:
-        handleRoleSwitch(DEMO_ROLES[3]); // Operations
+        handleRoleSwitch(personas[3]); // Operations
         setActiveTab('operations');
         break;
       case 9:
-        handleRoleSwitch(DEMO_ROLES[3]); // Finance
+        handleRoleSwitch(personas[3]); // Finance
         setActiveTab('billing');
         break;
       case 10:
-        handleRoleSwitch(DEMO_ROLES[4]); // Customer
-        setActiveTab('customer');
-        break;
       case 11:
-        handleRoleSwitch(DEMO_ROLES[4]); // Customer
+        handleRoleSwitch(personas[4]); // Customer
         setActiveTab('customer');
         break;
       case 12:
-        handleRoleSwitch(DEMO_ROLES[2]); // Manager
+        handleRoleSwitch(personas[2]); // Manager
         setActiveTab('manager');
         break;
       case 13:
-        handleRoleSwitch(DEMO_ROLES[4]); // Customer
+        handleRoleSwitch(personas[4]); // Customer
         setActiveTab('customer');
         break;
       case 14:
-        handleRoleSwitch(DEMO_ROLES[3]); // Finance
+        handleRoleSwitch(personas[3]); // Finance
         setActiveTab('billing');
         break;
       case 15:
@@ -160,63 +142,113 @@ export default function App() {
     }
   };
 
+  // Loading Splash Screen
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-slate-400">
+        <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mb-3" />
+        <span className="text-xs font-semibold uppercase tracking-wider">Verifying Enterprise Session...</span>
+      </div>
+    );
+  }
+
+  // Unauthenticated Gate: Show Google Auth Login View
+  if (!isAuthenticated || !user) {
+    return <LoginView onLoginSuccess={(tab) => { if (tab) setActiveTab(tab); }} />;
+  }
+
   return (
-    <div className="app-container">
-      {/* Top Navbar */}
-      <header className="top-navbar">
-        <div className="brand-badge">
-          <div className="brand-icon">
-            <Sparkles size={22} style={{ color: 'white' }} />
+    <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100 font-sans">
+      {/* Top Enterprise Header */}
+      <header className="sticky top-0 z-50 bg-slate-900/90 border-b border-slate-800/80 backdrop-blur-xl px-4 md:px-6 py-2.5 flex items-center justify-between shadow-lg">
+        {/* Brand Badge */}
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg shadow-indigo-500/20">
+            <Sparkles size={20} className="text-white" />
           </div>
           <div>
-            <h1 className="brand-title">DealFlow360</h1>
-            <span className="brand-subtitle">Smart Self-Governing Deal Management Engine</span>
+            <div className="flex items-center gap-2">
+              <h1 className="text-base font-extrabold tracking-tight bg-gradient-to-r from-white via-slate-200 to-indigo-300 bg-clip-text text-transparent leading-none">
+                DealFlow360
+              </h1>
+              <span className="hidden sm:inline-block text-[10px] px-2 py-0.5 rounded-full bg-indigo-950/80 border border-indigo-700/50 text-indigo-300 font-bold uppercase">
+                Enterprise
+              </span>
+            </div>
+            <span className="text-[11px] text-slate-400 font-medium hidden sm:block">
+              Smart Self-Governing Deal Management Engine
+            </span>
           </div>
         </div>
 
         {/* 5 User Roles Bar (Section 2 & 45) */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', background: 'rgba(0,0,0,0.3)', padding: '0.3rem 0.6rem', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.08)' }}>
-          <span style={{ fontSize: '0.72rem', color: '#94a3b8', fontWeight: '700', textTransform: 'uppercase', marginRight: '0.3rem' }}>
-            Role:
+        <div className="hidden lg:flex items-center gap-1 bg-slate-950/60 p-1 rounded-xl border border-slate-800">
+          <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider px-2">
+            Persona:
           </span>
-          {DEMO_ROLES.map(r => {
-            const isCurrent = currentUser.role === r.role;
-            const Icon = r.icon;
+          {personas.map(r => {
+            const isCurrent = user.role === r.role;
             return (
               <button
                 key={r.role}
                 onClick={() => handleRoleSwitch(r)}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.35rem',
-                  padding: '0.3rem 0.65rem',
-                  borderRadius: '6px',
-                  border: isCurrent ? '1px solid #6366f1' : '1px solid transparent',
-                  background: isCurrent ? 'rgba(99, 102, 241, 0.25)' : 'transparent',
-                  color: isCurrent ? '#c7d2fe' : '#94a3b8',
-                  fontSize: '0.75rem',
-                  fontWeight: '600',
-                  cursor: 'pointer',
-                  transition: 'all 0.15s ease'
-                }}
-                title={`Switch to ${r.label}`}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
+                  isCurrent 
+                    ? 'bg-indigo-600/30 text-indigo-200 border border-indigo-500/40 shadow-sm' 
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                }`}
+                title={`Switch to ${r.name} (${r.title})`}
               >
-                <Icon size={13} />
-                {r.name}
+                <img src={r.avatar} alt={r.name} className="w-4 h-4 rounded-full object-cover" />
+                <span>{r.badge}</span>
               </button>
             );
           })}
         </div>
 
-        {/* Database Status & Reset */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.75rem', color: '#94a3b8' }}>
-            <Database size={14} style={{ color: '#10b981' }} />
-            <span>{dbStatus?.engine || 'PostgreSQL'}</span>
+        {/* User Profile & Actions */}
+        <div className="flex items-center gap-3">
+          {/* Current Authenticated User Chip */}
+          <div className="flex items-center gap-2.5 bg-slate-800/50 px-3 py-1.5 rounded-xl border border-slate-700/60">
+            <img 
+              src={user.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80'} 
+              alt={user.name} 
+              className="w-6 h-6 rounded-full object-cover border border-indigo-400/50"
+            />
+            <div className="text-left hidden md:block">
+              <div className="text-xs font-bold text-white flex items-center gap-1.5 leading-none">
+                <span>{user.name.split(' ')[0]}</span>
+                <span className="text-[9px] px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 font-semibold uppercase">
+                  {user.badge || user.role}
+                </span>
+              </div>
+              <span className="text-[10px] text-slate-400 leading-none">{user.email}</span>
+            </div>
           </div>
-          <button onClick={handleResetDemo} className="btn btn-outline" style={{ padding: '0.35rem 0.75rem', fontSize: '0.75rem' }}>
-            <RotateCcw size={13} /> Reset Demo
+
+          {/* Database indicator */}
+          <div className="hidden xl:flex items-center gap-1.5 text-xs text-slate-400 bg-slate-800/40 px-2.5 py-1.5 rounded-lg border border-slate-700/50">
+            <Database size={13} className="text-emerald-400" />
+            <span className="font-mono text-[11px]">{dbStatus?.engine || 'PostgreSQL'}</span>
+          </div>
+
+          {/* Reset Demo Button */}
+          <button 
+            onClick={handleResetDemo}
+            className="p-1.5 text-slate-400 hover:text-white bg-slate-800/40 hover:bg-slate-800 rounded-lg border border-slate-700/50 transition-colors"
+            title="Reset Scenario Demo Data"
+          >
+            <RotateCcw size={14} />
+          </button>
+
+          {/* Logout Button */}
+          <button
+            onClick={logout}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-rose-300 bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/50 rounded-xl transition-colors shadow-sm"
+            title="Sign out of DealFlow360"
+          >
+            <LogOut size={13} />
+            <span className="hidden sm:inline">Sign Out</span>
           </button>
         </div>
       </header>
@@ -231,7 +263,7 @@ export default function App() {
       />
 
       {/* Navigation Sub-Tabs */}
-      <div style={{ background: 'rgba(10, 15, 26, 0.5)', borderBottom: '1px solid rgba(255,255,255,0.06)', padding: '0.4rem 1.5rem', display: 'flex', gap: '0.5rem' }}>
+      <div className="bg-slate-900/60 border-b border-slate-800/60 px-4 md:px-6 py-2 overflow-x-auto flex items-center gap-2">
         <button 
           onClick={() => { setActiveTab('admin'); setCurrentJudgeStep(1); }}
           className={`tab-btn ${activeTab === 'admin' ? 'active' : ''}`}
@@ -276,8 +308,8 @@ export default function App() {
         </button>
       </div>
 
-      {/* Main View Area */}
-      <main style={{ flex: 1, padding: '1.5rem', maxWidth: '1440px', margin: '0 auto', width: '100%' }}>
+      {/* Main View Workspace Area */}
+      <main className="flex-1 p-4 md:p-6 max-w-[1440px] mx-auto w-full">
         {activeTab === 'admin' && (
           <AdminView onRulesUpdated={() => activateStep(3)} />
         )}
@@ -333,5 +365,13 @@ export default function App() {
         )}
       </main>
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <DealFlowApp />
+    </AuthProvider>
   );
 }

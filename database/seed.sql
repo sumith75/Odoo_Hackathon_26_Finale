@@ -2,11 +2,11 @@
 
 -- Users (5 Roles)
 INSERT INTO users (id, name, email, role) VALUES
-  ('user-admin', 'Sarah Admin', 'admin@dealflow360.com', 'ADMIN'),
-  ('user-sales', 'Alex Morgan', 'sales@dealflow360.com', 'SALES_REP'),
-  ('user-manager', 'Vikram Mehta', 'manager@dealflow360.com', 'SALES_MANAGER'),
-  ('user-finance', 'Priya Sharma', 'finance@dealflow360.com', 'FINANCE_OPERATIONS'),
-  ('user-customer', 'Rajesh Kumar', 'customer@acme.com', 'CUSTOMER')
+  ('user-admin', 'Admin', 'admin@dealflow360.com', 'ADMIN'),
+  ('user-sales', 'Sales Rep', 'sales@dealflow360.com', 'SALES_REP'),
+  ('user-manager', 'Sales Manager', 'manager@dealflow360.com', 'SALES_MANAGER'),
+  ('user-finance', 'Finance / Operations', 'finance@dealflow360.com', 'FINANCE_OPERATIONS'),
+  ('user-customer', 'Customer', 'customer@acme.com', 'CUSTOMER')
 ON CONFLICT (id) DO NOTHING;
 
 -- Customers

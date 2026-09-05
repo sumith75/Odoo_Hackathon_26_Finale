@@ -12,14 +12,19 @@ import customerRoutes from './routes/customerRoutes.js';
 import executionRoutes from './routes/executionRoutes.js';
 import dashboardRoutes from './routes/dashboardRoutes.js';
 
+import { requestCorrelationMiddleware } from './middleware/requestCorrelation.js';
+import { idempotencyMiddleware } from './middleware/idempotency.js';
+
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Middleware
+// Production Middleware
 app.use(cors());
 app.use(express.json());
+app.use(requestCorrelationMiddleware);
+app.use(idempotencyMiddleware);
 app.use(morgan('dev'));
 
 // Health & Status endpoint

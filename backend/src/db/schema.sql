@@ -174,3 +174,13 @@ CREATE TABLE IF NOT EXISTS audit_logs (
   details TEXT,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Production Performance Indexes
+CREATE INDEX IF NOT EXISTS idx_quotes_customer ON quotations(customer_id);
+CREATE INDEX IF NOT EXISTS idx_quotes_sales_rep ON quotations(sales_rep_id);
+CREATE INDEX IF NOT EXISTS idx_quotes_status ON quotations(status);
+CREATE INDEX IF NOT EXISTS idx_quotes_created_at ON quotations(created_at);
+CREATE INDEX IF NOT EXISTS idx_quote_items_quote ON quotation_items(quotation_id);
+CREATE INDEX IF NOT EXISTS idx_inv_lookup ON inventory(warehouse_id, product_id);
+CREATE INDEX IF NOT EXISTS idx_audit_time ON audit_logs(created_at);
+

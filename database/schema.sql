@@ -212,3 +212,33 @@ CREATE TABLE IF NOT EXISTS audit_logs (
   new_value TEXT,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
+
+-- ============================================================================
+-- PRODUCTION PERFORMANCE INDEXES (Based on query patterns & workload)
+-- ============================================================================
+CREATE INDEX IF NOT EXISTS idx_quotes_customer ON quotations(customer_id);
+CREATE INDEX IF NOT EXISTS idx_quotes_sales_rep ON quotations(sales_rep_id);
+CREATE INDEX IF NOT EXISTS idx_quotes_status ON quotations(status);
+CREATE INDEX IF NOT EXISTS idx_quotes_created_at ON quotations(created_at);
+CREATE INDEX IF NOT EXISTS idx_quote_items_quote_id ON quotation_items(quotation_id);
+CREATE INDEX IF NOT EXISTS idx_inventory_lookup ON inventory(warehouse_id, product_id);
+CREATE INDEX IF NOT EXISTS idx_approvals_quote ON approvals(quotation_id);
+CREATE INDEX IF NOT EXISTS idx_negotiations_quote ON negotiations(quotation_id);
+CREATE INDEX IF NOT EXISTS idx_invoices_quote ON invoices(quotation_id);
+CREATE INDEX IF NOT EXISTS idx_audit_time ON audit_logs(created_at);
+
+-- ============================================================================
+-- ENTERPRISE PARTITIONING BLUEPRINT (For high-volume audit logs & quotations)
+-- Example for PostgreSQL time-based range partitioning:
+-- CREATE TABLE audit_logs_partitioned (
+--   id TEXT,
+--   actor TEXT NOT NULL,
+--   action TEXT NOT NULL,
+--   entity_id TEXT NOT NULL,
+--   created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+--   PRIMARY KEY (id, created_at)
+-- ) PARTITION BY RANGE (created_at);
+-- CREATE TABLE audit_logs_y2026 PARTITION OF audit_logs_partitioned
+--   FOR VALUES FROM ('2026-01-01') TO ('2027-01-01');
+-- ============================================================================
+

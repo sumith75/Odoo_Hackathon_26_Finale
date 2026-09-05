@@ -12,43 +12,36 @@
  * 8. Zero cross-tenant leakage / header spoofing protection
  */
 
-import http from 'http';
 import assert from 'assert';
 import { jobQueue } from '../src/jobs/jobQueue.js';
 
-const BASE_URL = 'http://localhost:5000';
+const BASE_URL = process.env.TEST_BASE_URL || 'http://127.0.0.1:5000';
 
-function request(path, options = {}) {
-  return new Promise((resolve, reject) => {
-    const url = new URL(path, BASE_URL);
-    const reqOptions = {
-      method: options.method || 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(options.headers || {}),
-      },
-    };
-
-    const req = http.request(url, reqOptions, (res) => {
-      let body = '';
-      res.on('data', (chunk) => (body += chunk));
-      res.on('end', () => {
-        try {
-          const parsed = body ? JSON.parse(body) : null;
-          resolve({ status: res.statusCode, headers: res.headers, data: parsed });
-        } catch (e) {
-          resolve({ status: res.statusCode, headers: res.headers, raw: body });
-        }
-      });
-    });
-
-    req.on('error', reject);
-
-    if (options.body) {
-      req.write(typeof options.body === 'string' ? options.body : JSON.stringify(options.body));
-    }
-    req.end();
+async function request(path, options = {}) {
+  const url = new URL(path, BASE_URL);
+  const res = await fetch(url, {
+    method: options.method || 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(options.headers || {}),
+    },
+    body: options.body ? (typeof options.body === 'string' ? options.body : JSON.stringify(options.body)) : undefined,
   });
+
+  const headers = {};
+  res.headers.forEach((v, k) => {
+    headers[k.toLowerCase()] = v;
+  });
+
+  const text = await res.text();
+  let data = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch (e) {
+    data = text;
+  }
+
+  return { status: res.status, headers, data, raw: text };
 }
 
 async function runFoundationTests() {

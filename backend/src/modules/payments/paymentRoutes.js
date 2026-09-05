@@ -10,6 +10,7 @@
  */
 
 import express from 'express';
+import prisma from '../../db/prisma.js';
 import { authenticateUser } from '../../middleware/auth.js';
 import { requireRole } from '../../middleware/rbac.js';
 import { resolveTenant } from '../../middleware/tenant.js';
@@ -20,6 +21,8 @@ import {
   getPaymentById,
   getInvoicePaymentSummary,
 } from '../../services/paymentService.js';
+import { generateInvoicePdf } from '../../services/documentRenderers/invoicePdfRenderer.js';
+import { logAudit } from '../../utils/audit.js';
 
 const router = express.Router();
 
@@ -227,6 +230,83 @@ invoicePaymentsRouter.get(
           message: error.message,
         },
       });
+    }
+  }
+);
+
+// GET /api/invoices/:invoiceId/pdf — Download/View Professional B2B Invoice PDF
+invoicePaymentsRouter.get(
+  '/:invoiceId/pdf',
+  async (req, res, next) => {
+    try {
+      const { invoiceId } = req.params;
+      const tenantId = req.tenantId;
+
+      const invoice = await prisma.invoice.findFirst({
+        where: {
+          id: invoiceId,
+          tenantId,
+        },
+        include: {
+          tenant: true,
+          customer: true,
+          quotation: true,
+          subscription: true,
+          items: {
+            include: { product: true },
+            orderBy: { createdAt: 'asc' },
+          },
+          payments: {
+            where: { status: { in: ['SUCCEEDED', 'PARTIALLY_REFUNDED', 'REFUNDED'] } },
+            orderBy: { paidAt: 'asc' },
+          },
+        },
+      });
+
+      if (!invoice) {
+        return res.status(404).json({
+          success: false,
+          error: {
+            code: 'INVOICE_NOT_FOUND',
+            message: 'Invoice not found or does not belong to current tenant.',
+          },
+        });
+      }
+
+      // Customer Role IDOR Protection: Customer can only access their own invoices
+      if (req.user.role === 'CUSTOMER') {
+        const userCustomerId = req.user.customerId || req.user.id;
+        if (invoice.customerId !== userCustomerId) {
+          return res.status(403).json({
+            success: false,
+            error: {
+              code: 'FORBIDDEN',
+              message: 'Access denied. You can only access your own invoice documents.',
+            },
+          });
+        }
+      }
+
+      const pdfBuffer = await generateInvoicePdf(invoice);
+      const filename = `DealFlow360_Invoice_${invoice.invoiceNumber}.pdf`;
+
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+      res.setHeader('Content-Length', pdfBuffer.length);
+
+      await logAudit({
+        tenantId,
+        userId: req.user.id,
+        action: 'INVOICE_PDF_GENERATED',
+        entityType: 'INVOICE',
+        entityId: invoice.id,
+        metadata: { invoiceNumber: invoice.invoiceNumber, filename },
+      });
+
+      res.end(pdfBuffer);
+    } catch (err) {
+      console.error('[INVOICE_PDF_ERROR]:', err);
+      next(err);
     }
   }
 );

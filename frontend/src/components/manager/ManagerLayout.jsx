@@ -14,6 +14,7 @@ import {
   X,
   Bell,
   Sparkles,
+  BarChart3,
 } from 'lucide-react';
 
 import NotificationBell from '../common/NotificationBell';
@@ -22,6 +23,7 @@ const MANAGER_NAV_ITEMS = [
   { id: 'dashboard', path: '/manager/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'approvals', path: '/manager/approvals', label: 'Approval Inbox', icon: Inbox, hasBadge: true },
   { id: 'deals', path: '/manager/deals', label: 'Team Deals', icon: Briefcase },
+  { id: 'reports', path: '/manager/reports', label: 'Reports & Analytics', icon: BarChart3 },
   { id: 'history', path: '/manager/history', label: 'Approval History', icon: History },
 ];
 

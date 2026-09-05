@@ -28,6 +28,7 @@ import customerDealRoomRoutes from './modules/customerDealRoom/customerRoutes.js
 // Multi-Tenant Finance & Operations Module
 import financeRoutes from './modules/finance/financeRoutes.js';
 import paymentRoutes, { invoicePaymentsRouter } from './modules/payments/paymentRoutes.js';
+import reportRoutes from './modules/reports/reportRoutes.js';
 
 // Production Multi-Tenant Routes Only - All backed by Neon PostgreSQL & Prisma
 import { requestCorrelationMiddleware } from './middleware/requestCorrelation.js';
@@ -135,6 +136,9 @@ app.use('/api/finance', financeRoutes);
 // ── Multi-Tenant Payments & Billing Settlement Module ─────────────────────────
 app.use('/api/payments', paymentRoutes);
 app.use('/api/invoices', invoicePaymentsRouter);
+
+// ── Multi-Tenant Management Reporting & Document Generation Module ─────────
+app.use('/api/reports', reportRoutes);
 
 // ── Database-backed Aliases for API Compatibility ────────────────────────
 app.use('/api/quotes', quotationRoutes);

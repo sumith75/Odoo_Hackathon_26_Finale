@@ -92,6 +92,7 @@ Configure → Quote → Risk → Approve → Negotiate → Re-Approve → Confir
 | ORM | Prisma 7 with PostgreSQL adapter |
 | Database | PostgreSQL 16 (Neon cloud or local) |
 | Cache / Coordination | Redis 7 (ioredis) with in-memory fallback |
+| Document Generation | PDFKit (Tax Invoices & Executive Reports) + ExcelJS (Spreadsheets) |
 | Auth | JWT (jsonwebtoken) + bcryptjs |
 | Containerization | Docker + Docker Compose |
 
@@ -241,6 +242,8 @@ npm run test:health            # Deal health engine (15 tests)
 npm run test:notifications     # Notifications & audit (5 tests)
 npm run test:e2e               # Full 14-step E2E deal lifecycle
 npm run test:security          # 20 security & concurrency hardening tests
+npm run test:payment           # 39 dedicated payment & billing integration tests
+npm run test:reports           # 34 reporting, PDF/XLS export & tax invoice tests
 
 # Run everything
 npm run test:all

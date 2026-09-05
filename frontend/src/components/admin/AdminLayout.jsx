@@ -16,6 +16,7 @@ import {
   ExternalLink,
   ShieldCheck,
   Warehouse,
+  BarChart3,
 } from 'lucide-react';
 
 import NotificationBell from '../common/NotificationBell';
@@ -29,6 +30,7 @@ const ADMIN_NAVIGATION = [
   { id: 'discount-rules', label: 'Discount Rules', icon: Percent },
   { id: 'approval-rules', label: 'Approval Rules', icon: CheckCheck },
   { id: 'warehouses', label: 'Warehouses & Inventory', icon: Warehouse },
+  { id: 'reports', label: 'Reports & Analytics', icon: BarChart3 },
   { id: 'activity', label: 'System Activity Center', icon: History },
 ];
 

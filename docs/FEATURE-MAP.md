@@ -181,3 +181,22 @@ Maps each hackathon requirement to the specific implementation in DealFlow360.
 | Warehouse management (CRUD) | `warehouseRoutes.js` |
 | Admin dashboard metrics | `dashboardRoutes.js` |
 | Audit activity center | `auditRoutes.js` |
+
+---
+
+## Reporting & Document Generation (Module 15)
+
+| Requirement | Implementation | Test |
+|---|---|---|
+| Sales performance dashboard & KPIs | `reportService.js` (`getSalesReportSummary`) | Module 15 Tests 1, 6, 7, 15 |
+| Rep-by-rep sales matrix & win rates | `reportService.js` (`getSalesPerformanceReport`) | Module 15 Test 2 |
+| Approval & Risk governance telemetry | `reportService.js` (`getApprovalReport`) | Module 15 Tests 3, 16 |
+| Product & category analytics | `reportService.js` (`getProductCategoryReport`) | Module 15 Tests 4, 17 |
+| Hybrid billing cashflow & recurring MRR/ARR | `reportService.js` (`getFinancialReport`) | Module 15 Test 5 |
+| Period, Rep, Approval, Category filtering | `buildFilterConditions` in `reportService.js` | Module 15 Tests 6, 7 |
+| Executive Sales Report PDF generation | `pdfReportRenderer.js` (`PDFKit` streaming buffer) | Module 15 Tests 8, 18 |
+| Multi-Sheet Excel Workbook export | `xlsxReportRenderer.js` (`ExcelJS` 5-sheet workbook) | Module 15 Tests 9, 19 |
+| Authoritative B2B Tax Invoice PDF generation | `invoicePdfRenderer.js` (`PDFKit` professional layout) | Module 15 Test 10 |
+| Customer-safe invoice download | Customer Deal Room PDF download (`CUSTOMER` IDOR checked) | Module 15 Tests 13, 14 |
+| Multi-tenant isolation on reports & invoice PDFs | Tenant scoping on all aggregation queries and PDF downloads | Module 15 Tests 11, 12 |
+

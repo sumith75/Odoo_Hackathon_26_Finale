@@ -20,6 +20,7 @@ import {
   X,
   ExternalLink,
   Receipt,
+  Download,
 } from 'lucide-react';
 
 export default function CustomerDealRoom({ quoteId, onBack, initialNegotiate = false, initialConfirm = false }) {
@@ -60,10 +61,41 @@ export default function CustomerDealRoom({ quoteId, onBack, initialNegotiate = f
   const [confirmationSuccess, setConfirmationSuccess] = useState(false);
 
   const [toastMessage, setToastMessage] = useState(null);
+  const [downloadingInvoiceId, setDownloadingInvoiceId] = useState(null);
 
   const showToast = (msg, type = 'success') => {
     setToastMessage({ text: msg, type });
     setTimeout(() => setToastMessage(null), 4000);
+  };
+
+  const handleDownloadInvoicePdf = async (inv) => {
+    try {
+      setDownloadingInvoiceId(inv.id);
+      const token = localStorage.getItem('token') || localStorage.getItem('df360_token');
+      const res = await fetch(`/api/invoices/${inv.id}/pdf`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error?.message || `HTTP ${res.status}: Failed to generate invoice PDF`);
+      }
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Invoice_${inv.invoiceNumber || inv.id}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      showToast(`Invoice ${inv.invoiceNumber} PDF downloaded successfully!`, 'success');
+    } catch (err) {
+      showToast('Error downloading invoice PDF: ' + err.message, 'error');
+    } finally {
+      setDownloadingInvoiceId(null);
+    }
   };
 
   useEffect(() => {
@@ -601,7 +633,19 @@ export default function CustomerDealRoom({ quoteId, onBack, initialNegotiate = f
             {quote.invoices.map((inv) => (
               <div key={inv.id} className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
                 <div className="flex items-center justify-between">
-                  <span className="font-mono font-bold text-xs text-slate-900">{inv.invoiceNumber}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono font-bold text-xs text-slate-900">{inv.invoiceNumber}</span>
+                    <button
+                      type="button"
+                      onClick={() => handleDownloadInvoicePdf(inv)}
+                      disabled={downloadingInvoiceId === inv.id}
+                      className="inline-flex items-center gap-1 text-[11px] font-semibold text-green-700 hover:text-green-800 bg-green-50 hover:bg-green-100 border border-green-200 px-2 py-0.5 rounded cursor-pointer transition disabled:opacity-50"
+                      title="Download Official Tax Invoice PDF"
+                    >
+                      <Download size={11} />
+                      <span>{downloadingInvoiceId === inv.id ? 'Generating...' : 'PDF'}</span>
+                    </button>
+                  </div>
                   <span
                     className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase ${
                       inv.status === 'PAID'

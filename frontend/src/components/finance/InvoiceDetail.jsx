@@ -13,6 +13,7 @@ import {
   Send,
   Printer,
   ShieldCheck,
+  Download,
 } from 'lucide-react';
 
 export default function InvoiceDetail({ invoiceId, onBack }) {
@@ -21,6 +22,7 @@ export default function InvoiceDetail({ invoiceId, onBack }) {
   const [orgData, setOrgData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
 
   // Payment form state
   const [payAmount, setPayAmount] = useState('');
@@ -171,6 +173,36 @@ export default function InvoiceDetail({ invoiceId, onBack }) {
   const isFullyPaid = invoice.status === 'PAID';
   const payments = invoice.payments || [];
 
+  const handleDownloadPdf = async () => {
+    if (!invoice?.id) return;
+    setDownloadingPdf(true);
+    try {
+      const token = localStorage.getItem('token') || localStorage.getItem('df360_token');
+      const res = await fetch(`/api/invoices/${invoice.id}/pdf`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error?.message || `HTTP ${res.status}: Failed to generate invoice PDF`);
+      }
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Invoice_${invoice.invoiceNumber || invoice.id}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      alert('Error downloading PDF: ' + err.message);
+    } finally {
+      setDownloadingPdf(false);
+    }
+  };
+
   return (
     <div className="space-y-6 max-w-4xl mx-auto">
       {/* ── Top Bar ────────────────────────────────────────────── */}
@@ -183,16 +215,32 @@ export default function InvoiceDetail({ invoiceId, onBack }) {
           <span>Back to Invoices</span>
         </button>
 
-        <span
-          className={`px-3 py-1 rounded-full text-xs font-extrabold flex items-center gap-1.5 ${
-            isFullyPaid
-              ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
-              : 'bg-amber-100 text-amber-800 border border-amber-200'
-          }`}
-        >
-          {isFullyPaid ? <CheckCircle2 size={13} /> : <Clock size={13} />}
-          {invoice.status}
-        </span>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleDownloadPdf}
+            disabled={downloadingPdf}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold shadow-xs cursor-pointer transition disabled:opacity-50"
+            title="Download authoritative B2B Tax Invoice PDF"
+          >
+            {downloadingPdf ? (
+              <RefreshCw size={13} className="animate-spin text-white" />
+            ) : (
+              <Download size={13} className="text-white" />
+            )}
+            <span>{downloadingPdf ? 'Generating PDF...' : 'Download Invoice PDF'}</span>
+          </button>
+
+          <span
+            className={`px-3 py-1 rounded-full text-xs font-extrabold flex items-center gap-1.5 ${
+              isFullyPaid
+                ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                : 'bg-amber-100 text-amber-800 border border-amber-200'
+            }`}
+          >
+            {isFullyPaid ? <CheckCircle2 size={13} /> : <Clock size={13} />}
+            {invoice.status}
+          </span>
+        </div>
       </div>
 
       {/* ── Formal Invoice Document Card ───────────────────────── */}

@@ -24,6 +24,7 @@ import AdminActivityCenter from './components/admin/AdminActivityCenter';
 import NotificationCenterView from './components/notifications/NotificationCenterView';
 import AdminCustomersView from './components/admin/AdminCustomersView';
 import WarehouseAdminView from './components/admin/WarehouseAdminView';
+import ReportsView from './components/reports/ReportsView';
 
 // Sales Representative Portal Components
 import SalesLayout from './components/sales/SalesLayout';
@@ -168,6 +169,7 @@ function AdminPortalWrapper() {
         <Route path="discount-rules" element={<DiscountRulesView />} />
         <Route path="approval-rules" element={<ApprovalRulesView />} />
         <Route path="warehouses" element={<WarehouseAdminView />} />
+        <Route path="reports" element={<ReportsView />} />
         <Route path="activity" element={<AdminActivityCenter />} />
         <Route path="audit" element={<AdminActivityCenter />} />
         <Route path="*" element={<Navigate to="dashboard" replace />} />
@@ -249,6 +251,7 @@ function SalesPortalWrapper() {
               />
             }
           />
+          <Route path="reports" element={<ReportsView />} />
           <Route path="*" element={<Navigate to="dashboard" replace />} />
         </Routes>
       </SalesLayout>
@@ -338,6 +341,7 @@ function ManagerPortalWrapper() {
             />
           }
         />
+        <Route path="reports" element={<ReportsView />} />
         <Route path="*" element={<Navigate to="dashboard" replace />} />
       </Routes>
     </ManagerLayout>

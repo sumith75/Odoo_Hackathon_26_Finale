@@ -190,6 +190,26 @@ Use this checklist to verify the project is ready for demonstration and judging.
 
 ---
 
+## Reporting & Document Generation (Module 15)
+
+- [x] Sales performance executive dashboard (`/manager/reports`, `/admin/reports`, `/sales/reports`)
+- [x] Period filters (Today, This Week, This Month, Custom Date Range)
+- [x] Sales Rep filter (with automatic scoping for Sales Reps)
+- [x] Approval Status filter (`APPROVED`, `PENDING_APPROVAL`, `REJECTED`)
+- [x] Product & Category filter (`HARDWARE`, `SERVICE`, `SUBSCRIPTION`, `BUNDLE`)
+- [x] Live aggregated KPIs (Total Quotes, Won Deals, Win Rate %, Quoted vs Won Value, Total Discount)
+- [x] Real Executive Sales Report PDF generation (`GET /api/reports/export/pdf` via PDFKit)
+- [x] Real Multi-Sheet Excel Workbook export (`GET /api/reports/export/xlsx` via ExcelJS)
+- [x] Authoritative B2B Tax Invoice PDF generation (`GET /api/invoices/:id/pdf`)
+- [x] Itemized invoice layout distinguishing One-Time Capex and Recurring Opex lines
+- [x] Customer Deal Room invoice download (customer-safe, redacting internal margins & costs)
+- [x] Finance portal invoice download
+- [x] IDOR defense on Invoice PDF generation (cross-customer download strictly returns 403)
+- [x] Multi-tenant isolation verified on all reporting endpoints and PDF downloads
+- [x] Module 15 test suite: `npm run test:reports` → **34/34 PASSED**
+
+---
+
 ## Documentation
 
 - [x] `README.md` — complete with setup, credentials, architecture, and workflow

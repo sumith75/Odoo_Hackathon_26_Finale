@@ -178,9 +178,29 @@ In Finance Hub:
 
 ---
 
-### 05:00 — Closing (10 seconds)
+---
 
-> *"DealFlow360 connects Configure → Quote → Risk → Approve → Negotiate → Re-Approve → Confirm → Fulfill → Bill → Pay → Monitor → Audit — all in one governed, multi-tenant, production-grade system."*
+### 05:00 — Sales Performance Reports & Document Generation (30 seconds)
+
+1. Open **Reports** in Manager or Admin navigation:
+   - Filter by **Period**: `This Month` / `This Week` / `Custom Date Range`
+   - Filter by **Sales Rep**: Rahul Sharma
+   - Filter by **Approval Status**: `APPROVED`
+   - Filter by **Product Category**: `HARDWARE`
+   - Review live aggregated KPIs: Win Rate %, Total Quoted vs Won Value, Total Discounts, Collection Ratio.
+2. Click **Export PDF Report** → instantaneous download of high-fidelity executive briefing PDF with dark header, KPI summary grid, and rep breakdowns.
+3. Click **Export Excel (XLSX)** → multi-sheet spreadsheet workbook (Executive Summary, Sales Performance, Governance & Approvals, Product Analytics, Invoices & Settlement).
+4. Go to **Finance Invoices** or **Customer Deal Room**:
+   - Click **Download Invoice PDF**
+   - Customer receives clean, authoritative B2B Tax Invoice PDF with itemized line breakdown (Capex vs Recurring SLA), taxes, and official transaction ledger.
+
+> *"Real reporting with applied filters, real PDF exports via PDFKit, real XLSX workbooks via ExcelJS, and customer-safe B2B tax invoices — all backed authoritatively by PostgreSQL."*
+
+---
+
+### 05:30 — Closing (10 seconds)
+
+> *"DealFlow360 connects Configure → Quote → Risk → Approve → Negotiate → Re-Approve → Confirm → Fulfill → Bill → Pay → Report & Export → Monitor → Audit — all in one governed, multi-tenant, production-grade system."*
 
 ---
 
@@ -193,6 +213,10 @@ In Finance Hub:
 | **Atomic concurrency** (zero overselling) | Warehouse allocation |
 | **Customer isolation** (no internal data leaked) | Customer Deal Room |
 | **Idempotent payments** (zero double billing) | Payment service — submit twice, same result |
+| **Authoritative Reports & Exports** (PDF & XLS) | Reports Dashboard (`/manager/reports`, `/admin/reports`) |
+| **B2B Tax Invoice PDF Generation** | Customer Deal Room & Finance Invoices (`GET /api/invoices/:id/pdf`) |
 | **Immutable audit trail** | Audit Activity Center |
 | **Full deal health** | Deal Health Dashboard |
 | **Security hardening** | Module 12 test suite: `npm run test:security` |
+| **Reporting test suite** | Module 15 test suite: `npm run test:reports` |
+

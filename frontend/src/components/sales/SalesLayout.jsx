@@ -12,6 +12,7 @@ import {
   X,
   ShieldCheck,
   PlusCircle,
+  BarChart3,
 } from 'lucide-react';
 
 import NotificationBell from '../common/NotificationBell';
@@ -21,6 +22,7 @@ const SALES_NAV_ITEMS = [
   { id: 'deals', label: 'My Deals', icon: FileText },
   { id: 'cpq', label: 'CPQ Studio', icon: Calculator, highlight: true },
   { id: 'customers', label: 'Customers', icon: Users },
+  { id: 'reports', label: 'Reports', icon: BarChart3 },
 ];
 
 export default function SalesLayout({ activeTab, onSelectTab, onNewQuote, children }) {

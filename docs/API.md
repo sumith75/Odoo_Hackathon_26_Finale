@@ -270,6 +270,29 @@ Headers:
 
 ---
 
+## Reporting & Document Generation (Module 15)
+
+| Method | Path | Purpose | Role |
+|---|---|---|---|
+| `GET` | `/api/reports/sales` | Executive sales performance & KPI aggregations | Admin / Manager / Sales Rep (Scoped) |
+| `GET` | `/api/reports/approvals` | Governance & risk approval telemetry report | Admin / Manager |
+| `GET` | `/api/reports/products` | Product & category sales volume & revenue analysis | Admin / Manager / Sales Rep (Scoped) |
+| `GET` | `/api/reports/financial` | Hybrid billing cashflow, invoice ledger, MRR/ARR | Admin / Finance / Manager |
+| `GET` | `/api/reports/export/pdf` | High-fidelity executive sales summary PDF report | Admin / Manager / Sales Rep (Scoped) |
+| `GET` | `/api/reports/export/xlsx`| Multi-sheet enterprise Excel report workbook | Admin / Manager / Sales Rep (Scoped) |
+| `GET` | `/api/invoices/:id/pdf` | Authoritative B2B Tax Invoice PDF document | Admin / Finance / Manager / Customer (Own) |
+
+**Reporting Filters (Query Parameters):**
+- `period`: `today`, `week`, `month`, `quarter`, `year`, `all`
+- `startDate`: ISO Date string (e.g. `2026-01-01`)
+- `endDate`: ISO Date string (e.g. `2026-12-31`)
+- `salesRepId`: Filter by sales representative ID (`ALL` for all reps)
+- `approvalStatus`: `ALL`, `APPROVED`, `PENDING_APPROVAL`, `REJECTED`
+- `productId`: Filter by product ID
+- `category`: `HARDWARE`, `SERVICE`, `SUBSCRIPTION`, `BUNDLE`
+
+---
+
 ## Error Codes
 
 | Code | Status | Description |

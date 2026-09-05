@@ -1,16 +1,26 @@
-# React + Vite
+# DealFlow360 — Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+React + Vite single-page app for DealFlow360, a self-governing B2B sales operations platform. Five role-based workspaces (Admin, Sales Rep, Sales Manager, Finance & Operations, Customer) share one authenticated shell, route-gated by role.
 
-Currently, two official plugins are available:
+See the repository root [README.md](../README.md) for the full project overview, setup instructions, demo credentials, and architecture notes. This file covers frontend-specific details only.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Structure
 
-## React Compiler
+- `src/components/admin/*` — backend configuration (products, discount/approval rules, warehouses, team, org)
+- `src/components/sales/*` — CPQ Studio (quote builder, live margin, risk engine, upsell panel)
+- `src/components/manager/*` — approval inbox/dossier, deal health, team pipeline
+- `src/components/finance/*` — fulfillment & warehouse allocation, subscriptions/proration, invoices, payments
+- `src/components/customer/*` — customer deal room (negotiation, counter-offers, confirmation)
+- `src/context/AuthContext.jsx` — shared auth/session state
+- `src/utils/api.js` — `fetchWithAuth()`, the single API client used across the app; handles bearer-token attachment and session-expiry (401) redirect to `/login`
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Local development
 
-## Expanding the Oxlint configuration
+```bash
+npm install
+npm run dev       # starts Vite dev server (proxies /api to the backend)
+npm run build     # production build
+npm run lint      # oxlint
+```
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+Requires the backend (`../backend`) running separately — see the root README for the full setup flow (env, `prisma db push`, seed, `npm run dev`).

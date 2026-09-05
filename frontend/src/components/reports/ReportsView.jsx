@@ -135,7 +135,7 @@ export default function ReportsView() {
   const handleExportPdf = async () => {
     try {
       setExportingPdf(true);
-      const token = localStorage.getItem('token');
+      const token = localStorage.getItem('df360_token');
       const qs = buildQueryString();
       const response = await fetch(`/api/reports/export/pdf?${qs}`, {
         headers: {
@@ -166,7 +166,7 @@ export default function ReportsView() {
   const handleExportXlsx = async () => {
     try {
       setExportingXlsx(true);
-      const token = localStorage.getItem('token');
+      const token = localStorage.getItem('df360_token');
       const qs = buildQueryString();
       const response = await fetch(`/api/reports/export/xlsx?${qs}`, {
         headers: {

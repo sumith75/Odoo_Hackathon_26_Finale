@@ -16,10 +16,12 @@ import {
   ChevronRight,
   TrendingUp,
   CreditCard,
+  Inbox,
 } from 'lucide-react';
 
 const FINANCE_NAV_ITEMS = [
   { id: 'dashboard', path: '/finance/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+  { id: 'approvals', path: '/finance/approvals', label: 'Finance Approvals', icon: Inbox, hasApprovalBadge: true },
   { id: 'fulfillment', path: '/finance/fulfillment', label: 'Fulfillment Queue', icon: PackageCheck, hasBadge: true },
   { id: 'invoices', path: '/finance/invoices', label: 'Invoices & Billing', icon: Receipt },
   { id: 'payments', path: '/finance/payments', label: 'Payments & Settlement', icon: CreditCard },
@@ -31,6 +33,7 @@ export default function FinanceLayout({ activeTab, onSelectTab, children }) {
   const { user, logout } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [badgeCount, setBadgeCount] = useState(0);
+  const [approvalBadgeCount, setApprovalBadgeCount] = useState(0);
 
   // Poll / fetch pending count for live badge
   useEffect(() => {
@@ -43,9 +46,17 @@ export default function FinanceLayout({ activeTab, onSelectTab, children }) {
       } catch (err) {
         console.error('Failed to fetch finance badge count:', err);
       }
+      try {
+        const approvalsRes = await fetchWithAuth('/api/finance/approvals?status=PENDING&limit=1');
+        if (approvalsRes.success) {
+          setApprovalBadgeCount(approvalsRes.pagination?.total || 0);
+        }
+      } catch (err) {
+        console.error('Failed to fetch finance approval badge count:', err);
+      }
     };
     fetchBadge();
-    const interval = setInterval(fetchBadge, 15000);
+    const interval = setInterval(fetchBadge, 30000);
     return () => clearInterval(interval);
   }, []);
 
@@ -145,6 +156,11 @@ export default function FinanceLayout({ activeTab, onSelectTab, children }) {
                   {item.hasBadge && badgeCount > 0 && (
                     <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-500 text-white">
                       {badgeCount}
+                    </span>
+                  )}
+                  {item.hasApprovalBadge && approvalBadgeCount > 0 && (
+                    <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-500 text-white">
+                      {approvalBadgeCount}
                     </span>
                   )}
                 </button>

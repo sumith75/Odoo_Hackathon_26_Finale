@@ -11,6 +11,8 @@ import {
   Clock,
   Sparkles,
   ExternalLink,
+  Pencil,
+  XCircle,
 } from 'lucide-react';
 
 export default function SubscriptionsView({ onNavigate }) {
@@ -19,6 +21,8 @@ export default function SubscriptionsView({ onNavigate }) {
   const [error, setError] = useState(null);
   const [actionLoading, setActionLoading] = useState(null);
   const [actionMessage, setActionMessage] = useState(null);
+  const [editingQtyFor, setEditingQtyFor] = useState(null);
+  const [qtyInput, setQtyInput] = useState('');
 
   const fetchSubscriptions = async () => {
     setLoading(true);
@@ -56,6 +60,60 @@ export default function SubscriptionsView({ onNavigate }) {
       }
     } catch (err) {
       setError(err.message || 'Error executing billing cycle');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const startEditQty = (sub) => {
+    setEditingQtyFor(sub.id);
+    setQtyInput(String(sub.quantity));
+    setActionMessage(null);
+  };
+
+  const handleApplyQtyChange = async (subId) => {
+    const newQuantity = parseInt(qtyInput, 10);
+    if (!Number.isFinite(newQuantity) || newQuantity < 0) {
+      setError('Enter a valid non-negative quantity.');
+      return;
+    }
+    setActionLoading(subId);
+    setError(null);
+    try {
+      const res = await fetchWithAuth(`/api/finance/subscriptions/${subId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ quantity: newQuantity, reason: 'Manual quantity change via Finance console' }),
+      });
+      if (res.success) {
+        setActionMessage(res.message || 'Subscription quantity updated.');
+        setEditingQtyFor(null);
+        await fetchSubscriptions();
+      } else {
+        setError(res.error?.message || 'Quantity change failed');
+      }
+    } catch (err) {
+      setError(err.message || 'Error changing subscription quantity');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleCancelSubscription = async (subId) => {
+    setActionLoading(subId);
+    setError(null);
+    try {
+      const res = await fetchWithAuth(`/api/finance/subscriptions/${subId}/cancel`, {
+        method: 'POST',
+        body: JSON.stringify({ reason: 'Cancelled via Finance console' }),
+      });
+      if (res.success) {
+        setActionMessage(res.message || 'Subscription cancelled.');
+        await fetchSubscriptions();
+      } else {
+        setError(res.error?.message || 'Cancellation failed');
+      }
+    } catch (err) {
+      setError(err.message || 'Error cancelling subscription');
     } finally {
       setActionLoading(null);
     }
@@ -117,6 +175,7 @@ export default function SubscriptionsView({ onNavigate }) {
                 <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
                   <th className="py-3 px-4">Product / Plan</th>
                   <th className="py-3 px-4">Customer</th>
+                  <th className="py-3 px-4">Qty</th>
                   <th className="py-3 px-4">Monthly Rate</th>
                   <th className="py-3 px-4">Billing Cycle</th>
                   <th className="py-3 px-4">Next Billing Date</th>
@@ -134,10 +193,24 @@ export default function SubscriptionsView({ onNavigate }) {
                       </span>
                     </td>
                     <td className="py-3.5 px-4 font-semibold text-slate-800">{sub.customer?.name}</td>
+                    <td className="py-3.5 px-4 font-semibold text-slate-700">
+                      {editingQtyFor === sub.id ? (
+                        <input
+                          type="number"
+                          min="0"
+                          value={qtyInput}
+                          onChange={(e) => setQtyInput(e.target.value)}
+                          className="w-16 px-1.5 py-1 border border-slate-300 rounded text-xs"
+                          autoFocus
+                        />
+                      ) : (
+                        sub.quantity
+                      )}
+                    </td>
                     <td className="py-3.5 px-4 font-extrabold text-purple-700">
                       ₹{Number(sub.recurringTotal).toLocaleString('en-IN')}/mo
                     </td>
-                    <td className="py-3.5 px-4 text-slate-600 font-medium">Monthly Advance</td>
+                    <td className="py-3.5 px-4 text-slate-600 font-medium">{sub.billingFrequency || 'MONTHLY'}</td>
                     <td className="py-3.5 px-4 font-semibold text-slate-700">
                       <span className="inline-flex items-center gap-1">
                         <Calendar size={12} className="text-slate-400" />
@@ -145,19 +218,63 @@ export default function SubscriptionsView({ onNavigate }) {
                       </span>
                     </td>
                     <td className="py-3.5 px-4">
-                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                      <span
+                        className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                          sub.status === 'ACTIVE' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'
+                        }`}
+                      >
                         <CheckCircle2 size={11} /> {sub.status}
                       </span>
                     </td>
                     <td className="py-3.5 px-4 text-right">
-                      <button
-                        onClick={() => handleBillCycle(sub.id)}
-                        disabled={actionLoading === sub.id}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-purple-700 hover:bg-purple-800 text-white rounded-lg text-xs font-semibold shadow-xs transition-all cursor-pointer disabled:opacity-50"
-                      >
-                        <Play size={12} />
-                        <span>{actionLoading === sub.id ? 'Billing...' : 'Bill Cycle'}</span>
-                      </button>
+                      <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                        {sub.status === 'ACTIVE' && editingQtyFor === sub.id ? (
+                          <>
+                            <button
+                              onClick={() => handleApplyQtyChange(sub.id)}
+                              disabled={actionLoading === sub.id}
+                              className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-900 text-white rounded-lg text-[11px] font-semibold cursor-pointer disabled:opacity-50"
+                            >
+                              {actionLoading === sub.id ? 'Applying...' : 'Apply'}
+                            </button>
+                            <button
+                              onClick={() => setEditingQtyFor(null)}
+                              className="px-2 py-1.5 bg-white border border-slate-200 text-slate-600 rounded-lg text-[11px] font-semibold cursor-pointer"
+                            >
+                              Cancel
+                            </button>
+                          </>
+                        ) : sub.status === 'ACTIVE' ? (
+                          <>
+                            <button
+                              onClick={() => handleBillCycle(sub.id)}
+                              disabled={actionLoading === sub.id}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-purple-700 hover:bg-purple-800 text-white rounded-lg text-xs font-semibold shadow-xs transition-all cursor-pointer disabled:opacity-50"
+                            >
+                              <Play size={12} />
+                              <span>{actionLoading === sub.id ? 'Billing...' : 'Bill Cycle'}</span>
+                            </button>
+                            <button
+                              onClick={() => startEditQty(sub)}
+                              disabled={actionLoading === sub.id}
+                              title="Change quantity (prorated)"
+                              className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-white border border-slate-200 text-slate-700 rounded-lg text-xs font-semibold hover:bg-slate-50 cursor-pointer disabled:opacity-50"
+                            >
+                              <Pencil size={12} />
+                            </button>
+                            <button
+                              onClick={() => handleCancelSubscription(sub.id)}
+                              disabled={actionLoading === sub.id}
+                              title="Cancel subscription (unused-time credit)"
+                              className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-white border border-red-200 text-red-600 rounded-lg text-xs font-semibold hover:bg-red-50 cursor-pointer disabled:opacity-50"
+                            >
+                              <XCircle size={12} />
+                            </button>
+                          </>
+                        ) : (
+                          <span className="text-[11px] text-slate-400 font-medium">No actions</span>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}

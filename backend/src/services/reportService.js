@@ -225,61 +225,41 @@ export async function getSalesPerformanceReport(tenantId, filters = {}) {
   const { quoteWhere } = buildFilterConditions(tenantId, filters);
   const wonStatuses = ['CUSTOMER_CONFIRMED', 'FULFILLMENT', 'PARTIALLY_FULFILLED', 'FULFILLED', 'PAID'];
 
-  // 1. Fetch sales reps for tenant
-  const salesReps = await prisma.user.findMany({
-    where: {
-      tenantId,
-      role: { in: ['SALES_REP', 'ADMIN', 'SALES_MANAGER'] },
-      ...(filters.salesRepId && filters.salesRepId !== 'ALL' ? { id: filters.salesRepId } : {}),
-    },
-    select: { id: true, name: true, email: true, role: true },
-    orderBy: { name: 'asc' },
-  });
+  // 1. Fetch sales reps for tenant, and aggregate quote totals in Postgres
+  // (groupBy) rather than pulling every matching quotation row into memory —
+  // this scales to the whole quote history without a response-time cliff.
+  const [salesReps, byApprovalStatus, byWonStatus] = await Promise.all([
+    prisma.user.findMany({
+      where: {
+        tenantId,
+        role: { in: ['SALES_REP', 'ADMIN', 'SALES_MANAGER'] },
+        ...(filters.salesRepId && filters.salesRepId !== 'ALL' ? { id: filters.salesRepId } : {}),
+      },
+      select: { id: true, name: true, email: true, role: true },
+      orderBy: { name: 'asc' },
+    }),
+    prisma.quotation.groupBy({
+      by: ['salesRepId', 'approvalStatus'],
+      where: quoteWhere,
+      _count: { _all: true },
+      _sum: { totalAmount: true, discountAmount: true },
+    }),
+    prisma.quotation.groupBy({
+      by: ['salesRepId'],
+      where: { ...quoteWhere, status: { in: wonStatuses } },
+      _count: { _all: true },
+      _sum: { totalAmount: true },
+    }),
+  ]);
 
-  // 2. Query quotes for these reps
-  const quotes = await prisma.quotation.findMany({
-    where: quoteWhere,
-    select: {
-      id: true,
-      salesRepId: true,
-      status: true,
-      approvalStatus: true,
-      totalAmount: true,
-      discountAmount: true,
-      subtotal: true,
-      createdAt: true,
-    },
-  });
-
-  // 3. Aggregate in-memory per rep
   const repMap = {};
-  for (const rep of salesReps) {
-    repMap[rep.id] = {
-      repId: rep.id,
-      repName: rep.name,
-      repEmail: rep.email,
-      role: rep.role,
-      quotesCount: 0,
-      approvedCount: 0,
-      pendingCount: 0,
-      rejectedCount: 0,
-      wonCount: 0,
-      totalQuotedValue: 0,
-      totalWonValue: 0,
-      totalDiscount: 0,
-      avgDiscountPct: 0,
-      winRate: 0,
-    };
-  }
-
-  for (const q of quotes) {
-    const repId = q.salesRepId;
+  const ensureRep = (repId, name, email, role) => {
     if (!repMap[repId]) {
       repMap[repId] = {
         repId,
-        repName: 'Unassigned / System',
-        repEmail: '—',
-        role: 'SYSTEM',
+        repName: name,
+        repEmail: email,
+        role,
         quotesCount: 0,
         approvedCount: 0,
         pendingCount: 0,
@@ -292,23 +272,30 @@ export async function getSalesPerformanceReport(tenantId, filters = {}) {
         winRate: 0,
       };
     }
+    return repMap[repId];
+  };
 
-    const item = repMap[repId];
-    item.quotesCount += 1;
-    const total = Number(q.totalAmount);
-    const discount = Number(q.discountAmount);
-    const subtotal = Number(q.subtotal);
+  for (const rep of salesReps) {
+    ensureRep(rep.id, rep.name, rep.email, rep.role);
+  }
 
-    item.totalQuotedValue += total;
-    item.totalDiscount += discount;
+  for (const row of byApprovalStatus) {
+    const rep = ensureRep(row.salesRepId, 'Unassigned / System', '—', 'SYSTEM');
+    const count = row._count._all;
 
-    if (q.approvalStatus === 'APPROVED') item.approvedCount += 1;
-    if (['PENDING_MANAGER', 'PENDING_FINANCE'].includes(q.approvalStatus)) item.pendingCount += 1;
-    if (q.approvalStatus === 'REJECTED') item.rejectedCount += 1;
-    if (wonStatuses.includes(q.status)) {
-      item.wonCount += 1;
-      item.totalWonValue += total;
-    }
+    rep.quotesCount += count;
+    rep.totalQuotedValue += Number(row._sum.totalAmount || 0);
+    rep.totalDiscount += Number(row._sum.discountAmount || 0);
+
+    if (row.approvalStatus === 'APPROVED') rep.approvedCount += count;
+    else if (row.approvalStatus === 'PENDING_MANAGER' || row.approvalStatus === 'PENDING_FINANCE') rep.pendingCount += count;
+    else if (row.approvalStatus === 'REJECTED') rep.rejectedCount += count;
+  }
+
+  for (const row of byWonStatus) {
+    const rep = ensureRep(row.salesRepId, 'Unassigned / System', '—', 'SYSTEM');
+    rep.wonCount += row._count._all;
+    rep.totalWonValue += Number(row._sum.totalAmount || 0);
   }
 
   // Calculate percentages and round numbers
@@ -381,71 +368,69 @@ export async function getProductCategoryReport(tenantId, filters = {}) {
   const { quoteWhere } = buildFilterConditions(tenantId, filters);
   const wonStatuses = ['CUSTOMER_CONFIRMED', 'FULFILLMENT', 'PARTIALLY_FULFILLED', 'FULFILLED', 'PAID'];
 
-  // Fetch line items matching quotation conditions
-  const items = await prisma.quotationItem.findMany({
-    where: {
-      quotation: quoteWhere,
-      ...(filters.productId && filters.productId !== 'ALL' ? { productId: filters.productId } : {}),
-      ...(filters.category && filters.category !== 'ALL' ? { productTypeSnapshot: filters.category } : {}),
-    },
-    include: {
-      quotation: {
-        select: { id: true, status: true, quoteNumber: true },
-      },
-      product: {
-        select: { id: true, name: true, sku: true, type: true },
-      },
-    },
+  const itemWhere = {
+    quotation: quoteWhere,
+    ...(filters.productId && filters.productId !== 'ALL' ? { productId: filters.productId } : {}),
+    ...(filters.category && filters.category !== 'ALL' ? { productTypeSnapshot: filters.category } : {}),
+  };
+
+  // Aggregate per product in Postgres (groupBy) instead of pulling every
+  // matching line item into memory — the response stays one row per
+  // product regardless of how many quotation_items exist.
+  const [allTotals, wonTotals] = await Promise.all([
+    prisma.quotationItem.groupBy({
+      by: ['productId'],
+      where: itemWhere,
+      _count: { _all: true },
+      _sum: { quantity: true, lineTotal: true, discountAmount: true, taxAmount: true },
+    }),
+    prisma.quotationItem.groupBy({
+      by: ['productId'],
+      where: { ...itemWhere, quotation: { ...quoteWhere, status: { in: wonStatuses } } },
+      _count: { _all: true },
+      _sum: { quantity: true },
+    }),
+  ]);
+
+  if (allTotals.length === 0) return [];
+
+  // Display name/category aren't part of the aggregation — one bounded
+  // lookup for the distinct products involved, not a per-row join.
+  const productIds = allTotals.map((row) => row.productId);
+  const products = await prisma.product.findMany({
+    where: { id: { in: productIds } },
+    select: { id: true, name: true, type: true },
   });
+  const productById = new Map(products.map((p) => [p.id, p]));
+  const wonByProduct = new Map(wonTotals.map((row) => [row.productId, row]));
 
-  const productMap = {};
+  return allTotals
+    .map((row) => {
+      const won = wonByProduct.get(row.productId);
+      const product = productById.get(row.productId);
+      const netValue = Number(row._sum.lineTotal || 0);
+      const discountAmount = Number(row._sum.discountAmount || 0);
+      const taxAmount = Number(row._sum.taxAmount || 0);
+      // Exact identity from the pricing engine (lineTotal = gross - discount + tax),
+      // so gross value is derived from the aggregated sums instead of re-fetching
+      // every line to recompute unitPrice * quantity.
+      const grossValue = netValue - taxAmount + discountAmount;
 
-  for (const item of items) {
-    const pid = item.productId;
-    const cat = item.productTypeSnapshot || item.product?.type || 'HARDWARE';
-    const name = item.productNameSnapshot || item.product?.name || 'Unknown Product';
-    const isWon = wonStatuses.includes(item.quotation?.status);
-
-    if (!productMap[pid]) {
-      productMap[pid] = {
-        productId: pid,
-        productName: name,
-        category: cat,
-        quoteCount: 0,
-        orderCount: 0,
-        quantityQuoted: 0,
-        quantitySold: 0,
-        grossValue: 0,
-        discountAmount: 0,
-        netValue: 0,
+      return {
+        productId: row.productId,
+        productName: product?.name || 'Unknown Product',
+        category: product?.type || 'HARDWARE',
+        quoteCount: row._count._all,
+        orderCount: won?._count._all || 0,
+        quantityQuoted: row._sum.quantity || 0,
+        quantitySold: won?._sum.quantity || 0,
+        grossValue: Math.round(grossValue * 100) / 100,
+        discountAmount: Math.round(discountAmount * 100) / 100,
+        netValue: Math.round(netValue * 100) / 100,
+        discountPct: grossValue > 0 ? Math.round((discountAmount / grossValue) * 1000) / 10 : 0,
       };
-    }
-
-    const p = productMap[pid];
-    const qty = Number(item.quantity) || 1;
-    const unitPrice = Number(item.unitPrice) || 0;
-    const lineTotal = Number(item.lineTotal) || 0;
-    const discount = Number(item.discountAmount) || 0;
-
-    p.quoteCount += 1;
-    p.quantityQuoted += qty;
-    p.grossValue += unitPrice * qty;
-    p.discountAmount += discount;
-    p.netValue += lineTotal;
-
-    if (isWon) {
-      p.orderCount += 1;
-      p.quantitySold += qty;
-    }
-  }
-
-  return Object.values(productMap).map((p) => ({
-    ...p,
-    grossValue: Math.round(p.grossValue * 100) / 100,
-    discountAmount: Math.round(p.discountAmount * 100) / 100,
-    netValue: Math.round(p.netValue * 100) / 100,
-    discountPct: p.grossValue > 0 ? Math.round((p.discountAmount / p.grossValue) * 1000) / 10 : 0,
-  })).sort((a, b) => b.netValue - a.netValue);
+    })
+    .sort((a, b) => b.netValue - a.netValue);
 }
 
 /**

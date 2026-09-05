@@ -13,6 +13,34 @@
 import prisma from '../db/prisma.js';
 import { logAudit } from '../utils/audit.js';
 
+const MS_PER_DAY = 1000 * 60 * 60 * 24;
+
+/** Advances a date by one full billing cycle for the given frequency. */
+function advanceByCycle(date, billingFrequency) {
+  const next = new Date(date);
+  if (billingFrequency === 'YEARLY') {
+    next.setFullYear(next.getFullYear() + 1);
+  } else if (billingFrequency === 'QUARTERLY') {
+    next.setMonth(next.getMonth() + 3);
+  } else {
+    next.setMonth(next.getMonth() + 1); // MONTHLY (default)
+  }
+  return next;
+}
+
+/** Inverse of advanceByCycle — derives the start of the current billing cycle from its end. */
+function subtractCycle(date, billingFrequency) {
+  const prev = new Date(date);
+  if (billingFrequency === 'YEARLY') {
+    prev.setFullYear(prev.getFullYear() - 1);
+  } else if (billingFrequency === 'QUARTERLY') {
+    prev.setMonth(prev.getMonth() - 3);
+  } else {
+    prev.setMonth(prev.getMonth() - 1);
+  }
+  return prev;
+}
+
 export function calculateHybridBilling(quote) {
   const items = quote.items || [];
 
@@ -257,8 +285,7 @@ export async function generateRecurringInvoice(tenantId, subscriptionId, actorUs
   const periodStart = subscription.startDate;
   const periodEnd = subscription.nextBillingDate;
 
-  const nextBilling = new Date(subscription.nextBillingDate);
-  nextBilling.setMonth(nextBilling.getMonth() + 1);
+  const nextBilling = advanceByCycle(subscription.nextBillingDate, subscription.billingFrequency);
 
   const amount = parseFloat(subscription.recurringTotal);
   const dueDate = new Date();
@@ -342,5 +369,289 @@ export async function generateRecurringInvoice(tenantId, subscriptionId, actorUs
     message: `Recurring invoice ${result.invoice.invoiceNumber} generated. Next billing date advanced to ${nextBilling.toLocaleDateString()}.`,
     invoice: result.invoice,
     subscription: result.subscription,
+  };
+}
+
+/**
+ * Mid-cycle subscription quantity change with proration.
+ *
+ * An increase bills the customer now for the prorated cost of the added
+ * quantity over the remaining days of the current cycle. A decrease issues
+ * a credit note (represented as a negative-amount invoice, since there is
+ * no separate credit-note entity) for the prorated value of the removed
+ * quantity, per the spec's "proration rules for mid cycle quantity ...
+ * changes" and "partial refund or credit note" requirements.
+ */
+export async function changeSubscriptionQuantity(tenantId, subscriptionId, newQuantity, actorUserId, reason) {
+  const qty = Number(newQuantity);
+  if (!Number.isFinite(qty) || qty < 0) {
+    const err = new Error('newQuantity must be a non-negative number.');
+    err.statusCode = 400;
+    err.code = 'VALIDATION_ERROR';
+    throw err;
+  }
+
+  const subscription = await prisma.subscription.findFirst({
+    where: { id: subscriptionId, tenantId },
+    include: { product: true, customer: true },
+  });
+
+  if (!subscription) {
+    const err = new Error('Subscription not found.');
+    err.statusCode = 404;
+    err.code = 'NOT_FOUND';
+    throw err;
+  }
+
+  if (subscription.status !== 'ACTIVE') {
+    const err = new Error(`Cannot change quantity on a subscription with status: ${subscription.status}`);
+    err.statusCode = 400;
+    err.code = 'SUBSCRIPTION_INACTIVE';
+    throw err;
+  }
+
+  if (qty === subscription.quantity) {
+    return {
+      success: true,
+      message: 'Requested quantity matches the current quantity — nothing to prorate.',
+      proration: null,
+      subscription,
+    };
+  }
+
+  const cycleEnd = new Date(subscription.nextBillingDate);
+  const cycleStart = subtractCycle(cycleEnd, subscription.billingFrequency);
+  const totalCycleDays = Math.max(1, Math.round((cycleEnd.getTime() - cycleStart.getTime()) / MS_PER_DAY));
+  const now = new Date();
+  const remainingDays = Math.max(0, Math.min(totalCycleDays, Math.round((cycleEnd.getTime() - now.getTime()) / MS_PER_DAY)));
+
+  const unitPrice = parseFloat(subscription.recurringUnitPrice);
+  const quantityDelta = qty - subscription.quantity;
+  const proratedAmount = Math.round(((unitPrice * quantityDelta * remainingDays) / totalCycleDays) * 100) / 100;
+
+  const dueDate = new Date();
+  dueDate.setDate(dueDate.getDate() + 14);
+
+  const result = await prisma.$transaction(async (tx) => {
+    const updatedSub = await tx.subscription.update({
+      where: { id: subscriptionId },
+      data: {
+        quantity: qty,
+        recurringTotal: Math.round(unitPrice * qty * 100) / 100,
+      },
+    });
+
+    let adjustmentInvoice = null;
+
+    if (proratedAmount !== 0) {
+      const invoiceNumber = await generateInvoiceNumber(tenantId);
+      const isCredit = proratedAmount < 0;
+      const description = isCredit
+        ? `Credit note — mid-cycle quantity decrease for ${subscription.product.name} (${subscription.quantity} -> ${qty}, ${remainingDays}/${totalCycleDays} days remaining in cycle)`
+        : `Mid-cycle proration — quantity increase for ${subscription.product.name} (${subscription.quantity} -> ${qty}, ${remainingDays}/${totalCycleDays} days remaining in cycle)`;
+
+      adjustmentInvoice = await tx.invoice.create({
+        data: {
+          tenantId,
+          invoiceNumber,
+          quotationId: subscription.quotationId,
+          customerId: subscription.customerId,
+          subscriptionId,
+          invoiceType: 'RECURRING',
+          status: 'ISSUED',
+          subtotal: proratedAmount,
+          discountAmount: 0,
+          taxAmount: 0,
+          totalAmount: proratedAmount,
+          amountPaid: 0,
+          amountDue: proratedAmount,
+          issueDate: now,
+          dueDate: isCredit ? now : dueDate,
+          currency: 'INR',
+          billingPeriodStart: now,
+          billingPeriodEnd: cycleEnd,
+          items: {
+            create: [
+              {
+                tenantId,
+                quotationItemId: subscription.quotationItemId,
+                productId: subscription.productId,
+                description,
+                quantity: Math.abs(quantityDelta),
+                unitPrice,
+                discountAmount: 0,
+                taxAmount: 0,
+                lineTotal: proratedAmount,
+                billingType: 'RECURRING',
+                servicePeriodStart: now,
+                servicePeriodEnd: cycleEnd,
+              },
+            ],
+          },
+        },
+        include: { items: true },
+      });
+    }
+
+    await logAudit({
+      tenantId,
+      userId: actorUserId,
+      action: 'SUBSCRIPTION_QUANTITY_CHANGED',
+      entityType: 'SUBSCRIPTION',
+      entityId: subscriptionId,
+      metadata: {
+        previousQuantity: subscription.quantity,
+        newQuantity: qty,
+        proratedAmount,
+        remainingDays,
+        totalCycleDays,
+        reason: reason || null,
+        adjustmentInvoiceNumber: adjustmentInvoice?.invoiceNumber || null,
+      },
+    });
+
+    return { updatedSub, adjustmentInvoice };
+  });
+
+  console.log(
+    `📐 [BILLING] Subscription ${subscriptionId} quantity ${subscription.quantity} -> ${qty} | Prorated: ${proratedAmount} | Remaining ${remainingDays}/${totalCycleDays} days`
+  );
+
+  return {
+    success: true,
+    message:
+      proratedAmount > 0
+        ? `Prorated adjustment invoice of ₹${proratedAmount} generated for the quantity increase.`
+        : proratedAmount < 0
+        ? `Credit note of ₹${Math.abs(proratedAmount)} issued for the quantity decrease.`
+        : 'Quantity changed with no mid-cycle cost impact.',
+    proration: {
+      previousQuantity: subscription.quantity,
+      newQuantity: qty,
+      remainingDays,
+      totalCycleDays,
+      proratedAmount,
+    },
+    subscription: result.updatedSub,
+    adjustmentInvoice: result.adjustmentInvoice,
+  };
+}
+
+/**
+ * Cancels an active subscription, issuing a prorated credit note for any
+ * unused time remaining in the current billing cycle.
+ */
+export async function cancelSubscription(tenantId, subscriptionId, actorUserId, reason) {
+  const subscription = await prisma.subscription.findFirst({
+    where: { id: subscriptionId, tenantId },
+    include: { product: true },
+  });
+
+  if (!subscription) {
+    const err = new Error('Subscription not found.');
+    err.statusCode = 404;
+    err.code = 'NOT_FOUND';
+    throw err;
+  }
+
+  if (subscription.status !== 'ACTIVE') {
+    const err = new Error(`Subscription is already ${subscription.status}.`);
+    err.statusCode = 400;
+    err.code = 'SUBSCRIPTION_ALREADY_INACTIVE';
+    throw err;
+  }
+
+  const cycleEnd = new Date(subscription.nextBillingDate);
+  const cycleStart = subtractCycle(cycleEnd, subscription.billingFrequency);
+  const totalCycleDays = Math.max(1, Math.round((cycleEnd.getTime() - cycleStart.getTime()) / MS_PER_DAY));
+  const now = new Date();
+  const remainingDays = Math.max(0, Math.min(totalCycleDays, Math.round((cycleEnd.getTime() - now.getTime()) / MS_PER_DAY)));
+
+  const unusedAmount = Math.round(
+    ((parseFloat(subscription.recurringTotal) * remainingDays) / totalCycleDays) * 100
+  ) / 100;
+
+  const result = await prisma.$transaction(async (tx) => {
+    const updatedSub = await tx.subscription.update({
+      where: { id: subscriptionId },
+      data: { status: 'CANCELLED', endDate: now },
+    });
+
+    let creditNote = null;
+    if (unusedAmount > 0) {
+      const invoiceNumber = await generateInvoiceNumber(tenantId);
+      creditNote = await tx.invoice.create({
+        data: {
+          tenantId,
+          invoiceNumber,
+          quotationId: subscription.quotationId,
+          customerId: subscription.customerId,
+          subscriptionId,
+          invoiceType: 'RECURRING',
+          status: 'ISSUED',
+          subtotal: -unusedAmount,
+          discountAmount: 0,
+          taxAmount: 0,
+          totalAmount: -unusedAmount,
+          amountPaid: 0,
+          amountDue: -unusedAmount,
+          issueDate: now,
+          dueDate: now,
+          currency: 'INR',
+          billingPeriodStart: now,
+          billingPeriodEnd: cycleEnd,
+          items: {
+            create: [
+              {
+                tenantId,
+                quotationItemId: subscription.quotationItemId,
+                productId: subscription.productId,
+                description: `Credit note — unused subscription time for ${subscription.product.name} following cancellation (${remainingDays}/${totalCycleDays} days remaining in cycle)`,
+                quantity: subscription.quantity,
+                unitPrice: parseFloat(subscription.recurringUnitPrice),
+                discountAmount: 0,
+                taxAmount: 0,
+                lineTotal: -unusedAmount,
+                billingType: 'RECURRING',
+                servicePeriodStart: now,
+                servicePeriodEnd: cycleEnd,
+              },
+            ],
+          },
+        },
+        include: { items: true },
+      });
+    }
+
+    await logAudit({
+      tenantId,
+      userId: actorUserId,
+      action: 'SUBSCRIPTION_CANCELLED',
+      entityType: 'SUBSCRIPTION',
+      entityId: subscriptionId,
+      metadata: {
+        reason: reason || null,
+        remainingDays,
+        totalCycleDays,
+        unusedAmount,
+        creditNoteNumber: creditNote?.invoiceNumber || null,
+      },
+    });
+
+    return { updatedSub, creditNote };
+  });
+
+  console.log(
+    `🛑 [BILLING] Subscription ${subscriptionId} cancelled | Unused-time credit: ${unusedAmount}`
+  );
+
+  return {
+    success: true,
+    message:
+      unusedAmount > 0
+        ? `Subscription cancelled. Credit note of ₹${unusedAmount} issued for unused time.`
+        : 'Subscription cancelled.',
+    subscription: result.updatedSub,
+    creditNote: result.creditNote,
   };
 }

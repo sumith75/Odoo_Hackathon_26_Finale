@@ -19,7 +19,7 @@ import {
   SlidersHorizontal,
 } from 'lucide-react';
 
-export default function ApprovalInbox({ onSelectQuote }) {
+export default function ApprovalInbox({ onSelectQuote, apiBase = '/api/manager', title = 'Manager Approval Inbox' }) {
   const { user } = useAuth();
   const currency = user?.currency || 'INR';
 
@@ -51,7 +51,7 @@ export default function ApprovalInbox({ onSelectQuote }) {
       if (startDate) queryParams.set('startDate', startDate);
       if (endDate) queryParams.set('endDate', endDate);
 
-      const res = await fetchWithAuth(`/api/manager/approvals?${queryParams.toString()}`);
+      const res = await fetchWithAuth(`${apiBase}/approvals?${queryParams.toString()}`);
       if (res.success) {
         setQuotations(res.data || []);
         if (res.pagination) {
@@ -82,7 +82,7 @@ export default function ApprovalInbox({ onSelectQuote }) {
       {/* ── Header ────────────────────────────────────────────── */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Manager Approval Inbox</h1>
+          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">{title}</h1>
           <p className="text-xs text-slate-500 mt-1">
             Evaluate quotations requiring commercial approval, discount ceiling overrides, and margin sign-offs
           </p>

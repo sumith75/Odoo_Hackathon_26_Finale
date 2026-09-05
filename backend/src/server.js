@@ -2,7 +2,6 @@ import express from 'express';
 import cors from 'cors';
 import morgan from 'morgan';
 import dotenv from 'dotenv';
-import { initDb, getDbStatus } from './config/db.js';
 
 // Multi-Tenant Admin Modules
 import authRoutes from './modules/auth/authRoutes.js';
@@ -158,9 +157,22 @@ app.use((err, req, res, next) => {
   });
 });
 
+// Verify the authoritative Prisma/PostgreSQL connection before accepting traffic
+async function verifyDatabaseConnection() {
+  const safeUrl = (process.env.DATABASE_URL || '').replace(/:[^:@]+@/, ':****@');
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    console.log('✅ [DATABASE] Successfully connected to PostgreSQL at:', safeUrl);
+    console.log('✅ [DATABASE] PostgreSQL active via Neon & Prisma.');
+  } catch (err) {
+    console.error('❌ [DATABASE] Failed to connect to PostgreSQL:', err.message);
+    throw err;
+  }
+}
+
 // Initialize Database & Start Server
 async function startServer() {
-  await initDb();
+  await verifyDatabaseConnection();
 
   const server = app.listen(PORT, () => {
     console.log(`====================================================`);

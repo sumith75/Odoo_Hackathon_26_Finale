@@ -791,8 +791,8 @@ async function main() {
   await prisma.quotation.deleteMany({
     where: {
       tenantId: org.id,
-      quoteNumber: { in: ['DF360-2026-000021', 'DF360-2026-000022'] },
-      id: { notIn: ['quote-df360-000021', 'quote-df360-000022'] },
+      quoteNumber: { in: ['DF360-2026-000021', 'DF360-2026-000022', 'DF360-2026-000023'] },
+      id: { notIn: ['quote-df360-000021', 'quote-df360-000022', 'quote-df360-000023'] },
     },
   });
 
@@ -920,7 +920,7 @@ async function main() {
       id: 'quote-df360-000022',
       tenantId: org.id,
       quoteNumber: 'DF360-2026-000022',
-      customerId: 'cust-global-002',
+      customerId: 'cust-global-004',
       salesRepId: rahul.id,
       status: 'CUSTOMER_CONFIRMED',
       approvalStatus: 'APPROVED',
@@ -960,9 +960,127 @@ async function main() {
     },
   });
 
+  // Quote 3: DF360-2026-000023 — Blended Discount Risk Demo
+  // Mirrors the spec's own worked example: Acme is GOLD tier (15% HW / 10% SVC ceilings).
+  // Laptop X gets 12% (within the 15% Hardware ceiling -> fine), but Installation Service
+  // gets 18% (breaches the 10% Service ceiling by 8 points) -> flagged for Manager approval,
+  // even though the customer's overall Gold discretion (15%) would look fine on paper.
+  const demoQuote3 = await prisma.quotation.upsert({
+    where: {
+      tenantId_quoteNumber: {
+        tenantId: org.id,
+        quoteNumber: 'DF360-2026-000023',
+      },
+    },
+    update: {
+      status: 'PENDING_APPROVAL',
+      approvalStatus: 'PENDING_MANAGER',
+      requiredApproverRole: 'SALES_MANAGER',
+      fulfillmentStatus: 'UNALLOCATED',
+      billingStatus: 'UNBILLED',
+      subtotal: 100000.00,
+      discountAmount: 13200.00,
+      taxAmount: 0,
+      totalAmount: 86800.00,
+      costAmount: 72000.00,
+      marginAmount: 14800.00,
+      marginPercentage: 17.05,
+      riskScore: 45,
+      riskLevel: 'HIGH',
+      riskReasons: [
+        'Installation Service line discounted 18% against a Gold Tier Service ceiling of 10% (8 points over)',
+        'Laptop X line discounted 12% is within the 15% Gold Tier Hardware ceiling',
+        'Blended risk flags this quote for Sales Manager approval despite the customer\'s overall Gold discretion',
+      ],
+    },
+    create: {
+      id: 'quote-df360-000023',
+      tenantId: org.id,
+      quoteNumber: 'DF360-2026-000023',
+      customerId: acmeCustomer.id,
+      salesRepId: rahul.id,
+      status: 'PENDING_APPROVAL',
+      approvalStatus: 'PENDING_MANAGER',
+      requiredApproverRole: 'SALES_MANAGER',
+      fulfillmentStatus: 'UNALLOCATED',
+      billingStatus: 'UNBILLED',
+      subtotal: 100000.00,
+      discountAmount: 13200.00,
+      taxAmount: 0,
+      totalAmount: 86800.00,
+      costAmount: 72000.00,
+      marginAmount: 14800.00,
+      marginPercentage: 17.05,
+      riskScore: 45,
+      riskLevel: 'HIGH',
+      riskReasons: [
+        'Installation Service line discounted 18% against a Gold Tier Service ceiling of 10% (8 points over)',
+        'Laptop X line discounted 12% is within the 15% Gold Tier Hardware ceiling',
+        'Blended risk flags this quote for Sales Manager approval despite the customer\'s overall Gold discretion',
+      ],
+    },
+  });
+
+  await prisma.approval.deleteMany({ where: { quotationId: demoQuote3.id } });
+  await prisma.quotationItem.deleteMany({ where: { quotationId: demoQuote3.id } });
+
+  await prisma.quotationItem.createMany({
+    data: [
+      {
+        id: 'qitem-000023-1',
+        quotationId: demoQuote3.id,
+        productId: 'prod-001', // Laptop X (Hardware) — 12% discount, within 15% ceiling
+        productNameSnapshot: 'Laptop X',
+        productTypeSnapshot: 'HARDWARE',
+        quantity: 1,
+        unitPrice: 80000.00,
+        costPrice: 60000.00,
+        discountPercentage: 12.00,
+        discountAmount: 9600.00,
+        taxAmount: 0,
+        lineTotal: 70400.00,
+        marginAmount: 10400.00,
+        marginPercentage: 14.77,
+        serviceFulfilled: false,
+      },
+      {
+        id: 'qitem-000023-2',
+        quotationId: demoQuote3.id,
+        productId: 'prod-002', // Installation Service (Service) — 18% discount, breaches 10% ceiling
+        productNameSnapshot: 'Installation Service',
+        productTypeSnapshot: 'SERVICE',
+        quantity: 1,
+        unitPrice: 20000.00,
+        costPrice: 12000.00,
+        discountPercentage: 18.00,
+        discountAmount: 3600.00,
+        taxAmount: 0,
+        lineTotal: 16400.00,
+        marginAmount: 4400.00,
+        marginPercentage: 26.83,
+        serviceFulfilled: false,
+      },
+    ],
+  });
+
+  await prisma.approval.create({
+    data: {
+      id: 'approval-df360-000023-1',
+      tenantId: org.id,
+      quotationId: demoQuote3.id,
+      approverRole: 'SALES_MANAGER',
+      level: 'SALES_MANAGER',
+      status: 'PENDING_MANAGER',
+      riskScoreAtDecision: 45,
+      marginPercentageAtDecision: 17.05,
+      discountAmountAtDecision: 13200.00,
+    },
+  });
+
   console.log('  📦 Demo Quotes seeded:');
   console.log('     • DF360-2026-000021 (Acme: 10 Laptop X, 1 Install, 1 Support) -> Confirmed, Ready for Split Allocation');
   console.log('     • DF360-2026-000022 (Global: 15 Laptop X) -> Confirmed, Ready for Shortage Rejection Test');
+  console.log('     • DF360-2026-000023 (Acme: 12% HW + 18% SVC) -> Pending Manager Approval, Blended Risk Demo');
 
   console.log('\n🎉 Seed completed successfully!');
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');

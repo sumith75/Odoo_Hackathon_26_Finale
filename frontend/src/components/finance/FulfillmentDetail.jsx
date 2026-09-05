@@ -27,6 +27,11 @@ export default function FulfillmentDetail({ quotationId, onNavigate, onBack }) {
   const [actionError, setActionError] = useState(null);
   const [actionSuccess, setActionSuccess] = useState(null);
 
+  const [backorderStatus, setBackorderStatus] = useState(null);
+  const [overrideMode, setOverrideMode] = useState(false);
+  const [warehousesList, setWarehousesList] = useState([]);
+  const [overridePlan, setOverridePlan] = useState({}); // { [quotationItemId]: { [warehouseId]: qty } }
+
   const fetchDetail = async () => {
     setLoading(true);
     setError(null);
@@ -44,9 +49,105 @@ export default function FulfillmentDetail({ quotationId, onNavigate, onBack }) {
     }
   };
 
+  const fetchBackorderStatus = async () => {
+    try {
+      const res = await fetchWithAuth(`/api/finance/fulfillment/${quotationId}/backorder-status`);
+      if (res.success) {
+        setBackorderStatus(res.data);
+      }
+    } catch (err) {
+      // Non-fatal — backorder banner just won't show
+    }
+  };
+
   useEffect(() => {
     fetchDetail();
+    fetchBackorderStatus();
   }, [quotationId]);
+
+  // Action: Consolidate Remaining Backorder (stock has newly arrived)
+  const handleConsolidateBackorder = async () => {
+    setActionLoading(true);
+    setActionError(null);
+    setActionSuccess(null);
+    try {
+      const res = await fetchWithAuth(`/api/finance/fulfillment/${quotationId}/consolidate-backorder`, {
+        method: 'POST',
+      });
+      if (res.success) {
+        setActionSuccess(res.message || 'Backorder consolidated.');
+        await fetchDetail();
+        await fetchBackorderStatus();
+      } else {
+        setActionError(res.error?.message || 'Consolidation failed');
+      }
+    } catch (err) {
+      setActionError(err.message || 'Error consolidating backorder');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  // Load the full warehouse list (with current stock) when entering override mode
+  const enterOverrideMode = async () => {
+    setOverrideMode(true);
+    setOverridePlan({});
+    try {
+      const res = await fetchWithAuth('/api/finance/warehouses');
+      if (res.success) {
+        setWarehousesList(res.data || []);
+      }
+    } catch (err) {
+      setActionError(err.message || 'Failed to load warehouse list for override');
+    }
+  };
+
+  const setOverrideQty = (itemId, warehouseId, qty) => {
+    setOverridePlan((prev) => ({
+      ...prev,
+      [itemId]: { ...(prev[itemId] || {}), [warehouseId]: qty },
+    }));
+  };
+
+  // Action: Apply a manually-specified warehouse split, overriding auto-allocation
+  const handleApplyOverride = async () => {
+    const manualAllocations = [];
+    for (const [quotationItemId, byWarehouse] of Object.entries(overridePlan)) {
+      for (const [warehouseId, qty] of Object.entries(byWarehouse)) {
+        const quantity = parseInt(qty, 10);
+        if (quantity > 0) {
+          manualAllocations.push({ quotationItemId, warehouseId, quantity });
+        }
+      }
+    }
+    if (manualAllocations.length === 0) {
+      setActionError('Enter at least one warehouse quantity before applying the override.');
+      return;
+    }
+
+    setActionLoading(true);
+    setActionError(null);
+    setActionSuccess(null);
+    try {
+      const res = await fetchWithAuth(`/api/finance/fulfillment/${quotationId}/allocate-override`, {
+        method: 'POST',
+        body: JSON.stringify({ allocations: manualAllocations }),
+      });
+      if (res.success) {
+        setActionSuccess(res.message || 'Allocation manually overridden.');
+        setOverrideMode(false);
+        setOverridePlan({});
+        await fetchDetail();
+        await fetchBackorderStatus();
+      } else {
+        setActionError(res.error?.message || 'Override failed');
+      }
+    } catch (err) {
+      setActionError(err.message || 'Error applying manual override');
+    } finally {
+      setActionLoading(false);
+    }
+  };
 
   // Action 1: Auto-Allocate Inventory
   const handleAutoAllocate = async () => {
@@ -56,10 +157,12 @@ export default function FulfillmentDetail({ quotationId, onNavigate, onBack }) {
     try {
       const res = await fetchWithAuth(`/api/finance/fulfillment/${quotationId}/allocate`, {
         method: 'POST',
+        body: JSON.stringify({ allowPartial: true }),
       });
       if (res.success) {
         setActionSuccess(res.message || 'Inventory allocated successfully.');
         await fetchDetail();
+        await fetchBackorderStatus();
       } else {
         setActionError(res.error?.message || 'Allocation failed');
       }
@@ -253,22 +356,113 @@ export default function FulfillmentDetail({ quotationId, onNavigate, onBack }) {
             </div>
           </div>
 
-          {!hasAllocations ? (
-            <button
-              onClick={handleAutoAllocate}
-              disabled={actionLoading}
-              className="inline-flex items-center gap-1.5 px-4 py-2 bg-green-700 hover:bg-green-800 text-white rounded-lg text-xs font-bold shadow-xs transition-all cursor-pointer disabled:opacity-50"
-            >
-              <Boxes size={14} />
-              {actionLoading ? 'Allocating...' : 'Trigger Auto-Allocation'}
-            </button>
-          ) : (
-            <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">
-              <CheckCircle2 size={13} />
-              Allocated Across {allocations.length} Warehouse(s)
-            </span>
-          )}
+          <div className="flex items-center gap-2">
+            {!hasAllocations ? (
+              <button
+                onClick={handleAutoAllocate}
+                disabled={actionLoading}
+                className="inline-flex items-center gap-1.5 px-4 py-2 bg-green-700 hover:bg-green-800 text-white rounded-lg text-xs font-bold shadow-xs transition-all cursor-pointer disabled:opacity-50"
+              >
+                <Boxes size={14} />
+                {actionLoading ? 'Allocating...' : 'Trigger Auto-Allocation'}
+              </button>
+            ) : (
+              <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">
+                <CheckCircle2 size={13} />
+                Allocated Across {allocations.length} Warehouse(s)
+              </span>
+            )}
+            {!isFulfilled && (
+              <button
+                onClick={() => (overrideMode ? setOverrideMode(false) : enterOverrideMode())}
+                disabled={actionLoading}
+                className="inline-flex items-center gap-1.5 px-3 py-2 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-lg text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
+              >
+                <Split size={14} />
+                {overrideMode ? 'Cancel Override' : 'Override Split'}
+              </button>
+            )}
+          </div>
         </div>
+
+        {/* Consolidate Remaining Backorder Prompt */}
+        {backorderStatus?.hasBackorder && (
+          <div className="p-4 bg-orange-50 border border-orange-200 rounded-xl flex items-start justify-between gap-3 flex-wrap">
+            <div className="flex items-start gap-3">
+              <AlertTriangle size={18} className="text-orange-600 shrink-0 mt-0.5" />
+              <div>
+                <h4 className="text-xs font-bold text-orange-900">
+                  {backorderStatus.canConsolidateAny
+                    ? 'Backordered Stock Has Arrived'
+                    : 'Backorder Pending Restock'}
+                </h4>
+                <ul className="text-xs text-orange-700 mt-1 space-y-0.5">
+                  {backorderStatus.items.map((it) => (
+                    <li key={it.quotationItemId}>
+                      {it.productName}: {it.backorderedQuantity} unit(s) backordered
+                      {it.canConsolidate
+                        ? ` — ${it.currentlyAvailableStock} now in stock, ready to consolidate`
+                        : ' — awaiting restock'}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+            {backorderStatus.canConsolidateAny && (
+              <button
+                onClick={handleConsolidateBackorder}
+                disabled={actionLoading}
+                className="inline-flex items-center gap-1.5 px-3 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg text-xs font-bold shadow-xs transition-all cursor-pointer disabled:opacity-50 shrink-0"
+              >
+                {actionLoading ? 'Consolidating...' : 'Consolidate Remaining Backorder'}
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Manual Override Panel */}
+        {overrideMode && (
+          <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
+            <p className="text-xs text-slate-600">
+              Specify how many units of each hardware line should be pulled from each warehouse. This replaces the current allocation for that line.
+            </p>
+            {items
+              .filter((item) => item.productTypeSnapshot === 'HARDWARE')
+              .map((item) => (
+                <div key={item.id} className="p-3 bg-white border border-slate-200 rounded-lg">
+                  <div className="text-xs font-bold text-slate-800 mb-2">
+                    {item.productNameSnapshot} <span className="text-slate-400 font-normal">(needs {item.quantity})</span>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    {warehousesList.map((wh) => {
+                      const stockForProduct = (wh.inventories || []).find((inv) => inv.productId === item.productId);
+                      return (
+                        <label key={wh.id} className="flex items-center gap-1.5 text-[11px]">
+                          <span className="text-slate-600 font-medium truncate">
+                            {wh.name} <span className="text-slate-400">({stockForProduct?.availableQuantity ?? 0} avail.)</span>
+                          </span>
+                          <input
+                            type="number"
+                            min="0"
+                            className="w-16 px-1.5 py-1 border border-slate-200 rounded text-xs"
+                            value={overridePlan[item.id]?.[wh.id] || ''}
+                            onChange={(e) => setOverrideQty(item.id, wh.id, e.target.value)}
+                          />
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            <button
+              onClick={handleApplyOverride}
+              disabled={actionLoading}
+              className="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-lg text-xs font-bold shadow-xs transition-all cursor-pointer disabled:opacity-50"
+            >
+              {actionLoading ? 'Applying...' : 'Apply Manual Override'}
+            </button>
+          </div>
+        )}
 
         {/* Shortage Error Banner if occurred */}
         {actionError && actionError.includes('Insufficient') && (

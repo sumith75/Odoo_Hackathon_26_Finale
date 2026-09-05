@@ -333,6 +333,8 @@ model Quotation {
   @@index([tenantId, salesRepId])
   @@index([tenantId, status])
   @@index([tenantId, createdAt])
+  @@index([tenantId, riskLevel])
+  @@index([tenantId, riskScore])
   @@index([customerId])
   @@map("quotations")
 }
@@ -402,6 +404,7 @@ model AuditLog {
 
   @@index([tenantId])
   @@index([tenantId, createdAt])
+  @@index([tenantId, userId])
   @@index([entityType, entityId])
   @@map("audit_logs")
 }

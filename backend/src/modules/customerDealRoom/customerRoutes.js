@@ -15,6 +15,8 @@
 import express from 'express';
 import prisma from '../../db/prisma.js';
 import { authenticateUser } from '../../middleware/auth.js';
+import { resolveTenant } from '../../middleware/tenant.js';
+import { negotiationRateLimiter } from '../../middleware/rateLimiter.js';
 import { calculateQuotationTotals } from '../../services/pricingEngine.js';
 import { evaluateQuotationRisk } from '../../services/discountRiskService.js';
 import { logAudit } from '../../utils/audit.js';
@@ -40,6 +42,7 @@ function requireCustomer(req, res, next) {
 }
 
 router.use(authenticateUser);
+router.use(resolveTenant);
 router.use(requireCustomer);
 
 // Helper: Convert internal quote status into customer-friendly display label
@@ -463,7 +466,7 @@ router.get('/quotes/:id', async (req, res) => {
 // POST /api/customer/quotes/:id/delivery-request
 // Submit Requested Delivery Date with Note
 // ─────────────────────────────────────────────────────────────────────────────
-router.post('/quotes/:id/delivery-request', async (req, res) => {
+router.post('/quotes/:id/delivery-request', negotiationRateLimiter, async (req, res) => {
   try {
     const customerId = req.user.customerId;
     const tenantId = req.user.tenantId;
@@ -547,7 +550,7 @@ router.post('/quotes/:id/delivery-request', async (req, res) => {
 // POST /api/customer/quotes/:id/comments & /quotes/:id/comment
 // Line-Level or Deal-Level Comment Stream
 // ─────────────────────────────────────────────────────────────────────────────
-router.post(['/quotes/:id/comments', '/quotes/:id/comment'], async (req, res) => {
+router.post(['/quotes/:id/comments', '/quotes/:id/comment'], negotiationRateLimiter, async (req, res) => {
   try {
     const customerId = req.user.customerId;
     const tenantId = req.user.tenantId;
@@ -612,7 +615,7 @@ router.post(['/quotes/:id/comments', '/quotes/:id/comment'], async (req, res) =>
 // POST /api/customer/quotes/:id/change-requests & /quotes/:id/line-change
 // Line-Level Change Request (e.g. Quantity change, Remove item, Add item)
 // ─────────────────────────────────────────────────────────────────────────────
-router.post(['/quotes/:id/change-requests', '/quotes/:id/line-change'], async (req, res) => {
+router.post(['/quotes/:id/change-requests', '/quotes/:id/line-change'], negotiationRateLimiter, async (req, res) => {
   try {
     const customerId = req.user.customerId;
     const tenantId = req.user.tenantId;
@@ -713,7 +716,7 @@ router.post(['/quotes/:id/change-requests', '/quotes/:id/line-change'], async (r
 // POST /api/customer/quotes/:id/counter-offer & /quotes/:id/negotiate
 // Submit Counter-Offer Discount -> Automated Internal Risk Recheck & Manager Re-Approval
 // ─────────────────────────────────────────────────────────────────────────────
-router.post(['/quotes/:id/counter-offer', '/quotes/:id/negotiate'], async (req, res) => {
+router.post(['/quotes/:id/counter-offer', '/quotes/:id/negotiate'], negotiationRateLimiter, async (req, res) => {
   try {
     const customerId = req.user.customerId;
     const tenantId = req.user.tenantId;

@@ -9,6 +9,7 @@ import { logAudit } from '../../utils/audit.js';
 import { parsePaginationParams, buildPaginationMeta } from '../../utils/pagination.js';
 import { dispatchNotificationAsync } from '../../services/notificationService.js';
 import { requireRole } from '../../middleware/rbac.js';
+import { mutationRateLimiter } from '../../middleware/rateLimiter.js';
 
 const router = express.Router();
 
@@ -438,7 +439,7 @@ router.post('/:id/recalculate', async (req, res) => {
 // POST /api/quotations
 // Section 8 & 28: Create New Draft Quotation with Snapshotting & Audit
 // ─────────────────────────────────────────────────────────────────────────────
-router.post('/', async (req, res) => {
+router.post('/', mutationRateLimiter, async (req, res) => {
   try {
     const { customerId, items = [], notes = '' } = req.body;
 
@@ -630,7 +631,7 @@ router.post('/', async (req, res) => {
 // PUT /api/quotations/:id
 // Section 28: Save / Update Draft Quotation
 // ─────────────────────────────────────────────────────────────────────────────
-router.put('/:id', async (req, res) => {
+router.put('/:id', mutationRateLimiter, async (req, res) => {
   try {
     const quote = await prisma.quotation.findFirst({
       where: { id: req.params.id, tenantId: req.tenantId },
@@ -830,7 +831,7 @@ router.put('/:id', async (req, res) => {
 // POST /api/quotations/:id/submit
 // Section 25, 26, 44 & 45: Submit Quote, Atomic Concurrency & Enforce Non-Bypassable Approvals
 // ─────────────────────────────────────────────────────────────────────────────
-router.post('/:id/submit', async (req, res) => {
+router.post('/:id/submit', mutationRateLimiter, async (req, res) => {
   try {
     const quote = await prisma.quotation.findFirst({
       where: { id: req.params.id, tenantId: req.tenantId },
@@ -1173,7 +1174,7 @@ async function handleSendToCustomer(req, res) {
   }
 }
 
-router.post('/:id/send', handleSendToCustomer);
-router.post('/:id/send-to-customer', handleSendToCustomer);
+router.post('/:id/send', mutationRateLimiter, handleSendToCustomer);
+router.post('/:id/send-to-customer', mutationRateLimiter, handleSendToCustomer);
 
 export default router;

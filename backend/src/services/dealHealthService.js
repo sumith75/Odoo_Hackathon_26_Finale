@@ -21,9 +21,47 @@ import redis from '../config/redis.js';
 const CACHE_TTL_SECONDS = 300; // 5 minutes
 
 /**
- * Pure calculation function based on pre-loaded quotation data
+ * Computes a sales rep's historical average discount percentage across their
+ * other quotations, for anomaly comparison. Returns null when there isn't
+ * enough history yet to make a meaningful comparison.
  */
-export function calculateDealHealth(quote) {
+export async function getRepAverageDiscountPercentage(tenantId, salesRepId, excludeQuoteId) {
+  if (!tenantId || !salesRepId) return null;
+
+  const priorQuotes = await prisma.quotation.findMany({
+    where: {
+      tenantId,
+      salesRepId,
+      id: { not: excludeQuoteId || undefined },
+      status: { not: 'DRAFT' },
+    },
+    select: { subtotal: true, discountAmount: true },
+    take: 200,
+  });
+
+  const withSubtotal = priorQuotes.filter((q) => parseFloat(q.subtotal) > 0);
+  const MIN_SAMPLE_SIZE = 3;
+  if (withSubtotal.length < MIN_SAMPLE_SIZE) return null;
+
+  const averagePercentage =
+    withSubtotal.reduce(
+      (sum, q) => sum + (parseFloat(q.discountAmount) / parseFloat(q.subtotal)) * 100,
+      0
+    ) / withSubtotal.length;
+
+  return {
+    averagePercentage: Math.round(averagePercentage * 100) / 100,
+    sampleSize: withSubtotal.length,
+  };
+}
+
+/**
+ * Pure calculation function based on pre-loaded quotation data.
+ * `repDiscountBaseline` (optional) is the sales rep's historical average
+ * discount percentage, computed separately since it requires querying the
+ * rep's other quotations — see getRepAverageDiscountPercentage().
+ */
+export function calculateDealHealth(quote, { repDiscountBaseline = null } = {}) {
   if (!quote) {
     return {
       dealId: null,
@@ -226,6 +264,28 @@ export function calculateDealHealth(quote) {
     });
   }
 
+  // 12. DISCOUNT_ANOMALY Signal — this quote's discount vs. the rep's own historical average.
+  // Catches deals where a rep is discounting well above their own norm, even when
+  // every individual line still technically clears its ceiling.
+  let discountAnomaly = false;
+  const ANOMALY_THRESHOLD_POINTS = 10; // percentage points above the rep's own average
+  if (repDiscountBaseline && parseFloat(quote.subtotal) > 0) {
+    const currentDiscountPercentage =
+      (parseFloat(quote.discountAmount || 0) / parseFloat(quote.subtotal)) * 100;
+    const delta = currentDiscountPercentage - repDiscountBaseline.averagePercentage;
+
+    if (delta >= ANOMALY_THRESHOLD_POINTS) {
+      discountAnomaly = true;
+      const severity = delta >= ANOMALY_THRESHOLD_POINTS * 2 ? 'HIGH' : 'MEDIUM';
+      score -= severity === 'HIGH' ? 20 : 10;
+      signals.push({
+        type: 'DISCOUNT_ANOMALY',
+        severity,
+        message: `This rep is discounting ${Math.round(currentDiscountPercentage)}% here vs. their own ${repDiscountBaseline.averagePercentage}% average across ${repDiscountBaseline.sampleSize} prior deals (+${Math.round(delta)} points)`,
+      });
+    }
+  }
+
   // Final score normalization
   const normalizedScore = Math.max(0, Math.min(100, Math.round(score)));
 
@@ -257,6 +317,8 @@ export function calculateDealHealth(quote) {
     recommendedAction = 'Expedite warehouse fulfillment dispatch';
   } else if (signals.some((s) => s.type === 'CUSTOMER_INACTIVE')) {
     recommendedAction = 'Re-engage customer on sent proposal';
+  } else if (discountAnomaly) {
+    recommendedAction = 'Review discount justification with the rep before proceeding';
   } else if (hasPendingInvoice) {
     recommendedAction = 'Monitor upcoming invoice payment due date';
   }
@@ -315,7 +377,12 @@ export async function getDealHealth(dealId, tenantId) {
     return null;
   }
 
-  const health = calculateDealHealth(quote);
+  const repDiscountBaseline = await getRepAverageDiscountPercentage(
+    tenantId,
+    quote.salesRepId,
+    quote.id
+  );
+  const health = calculateDealHealth(quote, { repDiscountBaseline });
 
   // Store in Redis cache
   try {

@@ -32,20 +32,25 @@ export default function ManagerLayout({ activeTab, onSelectTab, children }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
 
-  // Poll / fetch pending count for live badge
+  // Poll / fetch pending count for live badge — uses the lightweight
+  // approvals-count analytics endpoint rather than the full dashboard
+  // payload (which also fetches quotations, inventories, and recent
+  // approvals just to read one number).
   useEffect(() => {
     const fetchBadgeCount = async () => {
       try {
-        const res = await fetchWithAuth('/api/manager/dashboard');
-        if (res.success && res.data?.kpis) {
-          setPendingCount(res.data.kpis.pendingApprovals || 0);
+        const res = await fetchWithAuth('/api/manager/analytics/approvals');
+        if (res.success && res.data) {
+          // Match the original badge semantics: only deals actually
+          // pending this manager's own action, not Finance's queue.
+          setPendingCount(res.data.pendingManager || 0);
         }
       } catch (err) {
         console.error('Failed to fetch pending approvals count:', err);
       }
     };
     fetchBadgeCount();
-    const interval = setInterval(fetchBadgeCount, 15000);
+    const interval = setInterval(fetchBadgeCount, 30000);
     return () => clearInterval(interval);
   }, []);
 

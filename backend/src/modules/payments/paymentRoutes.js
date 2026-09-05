@@ -293,17 +293,26 @@ invoicePaymentsRouter.get(
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
       res.setHeader('Content-Length', pdfBuffer.length);
+      res.end(pdfBuffer);
 
-      await logAudit({
+      // Fire-and-forget: audit logging already fails soft and shouldn't make
+      // the download wait on one more remote DB write. userId is only ever
+      // an internal User id — AuditLog.userId has an FK to the users table,
+      // so a CUSTOMER actor (whose id lives in the customers table) must be
+      // recorded via actorRole/metadata instead, not passed as userId.
+      logAudit({
         tenantId,
-        userId: req.user.id,
+        userId: req.user.role === 'CUSTOMER' ? null : req.user.id,
+        actorRole: req.user.role,
         action: 'INVOICE_PDF_GENERATED',
         entityType: 'INVOICE',
         entityId: invoice.id,
-        metadata: { invoiceNumber: invoice.invoiceNumber, filename },
-      });
-
-      res.end(pdfBuffer);
+        metadata: {
+          invoiceNumber: invoice.invoiceNumber,
+          filename,
+          ...(req.user.role === 'CUSTOMER' ? { customerId: req.user.customerId || req.user.id } : {}),
+        },
+      }).catch((err) => console.error('[INVOICE_PDF_AUDIT_ERROR]:', err.message));
     } catch (err) {
       console.error('[INVOICE_PDF_ERROR]:', err);
       next(err);

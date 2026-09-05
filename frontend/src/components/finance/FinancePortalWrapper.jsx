@@ -9,6 +9,8 @@ import InvoiceDetail from './InvoiceDetail';
 import PaymentsView from './PaymentsView';
 import SubscriptionsView from './SubscriptionsView';
 import WarehousesView from './WarehousesView';
+import ApprovalInbox from '../manager/ApprovalInbox';
+import ApprovalDetails from '../manager/ApprovalDetails';
 
 function FulfillmentDetailRoute({ onNavigate, onBack }) {
   const { id } = useParams();
@@ -18,6 +20,18 @@ function FulfillmentDetailRoute({ onNavigate, onBack }) {
 function InvoiceDetailRoute({ onBack }) {
   const { id } = useParams();
   return <InvoiceDetail invoiceId={id} onBack={onBack} />;
+}
+
+function FinanceApprovalDetailsRoute({ onBack }) {
+  const { id } = useParams();
+  return (
+    <ApprovalDetails
+      quoteId={id}
+      apiBase="/api/finance"
+      onBack={onBack}
+      onActionCompleted={onBack}
+    />
+  );
 }
 
 export default function FinancePortalWrapper() {
@@ -50,6 +64,20 @@ export default function FinancePortalWrapper() {
       <Routes>
         <Route path="" element={<Navigate to="dashboard" replace />} />
         <Route path="dashboard" element={<FinanceDashboard onNavigate={handleNavigate} />} />
+        <Route
+          path="approvals"
+          element={
+            <ApprovalInbox
+              apiBase="/api/finance"
+              title="Finance Approval Inbox"
+              onSelectQuote={(id) => navigate(`/finance/approvals/${id}`)}
+            />
+          }
+        />
+        <Route
+          path="approvals/:id"
+          element={<FinanceApprovalDetailsRoute onBack={() => navigate('/finance/approvals')} />}
+        />
         <Route path="fulfillment" element={<FulfillmentView onNavigate={handleNavigate} />} />
         <Route
           path="fulfillment/:id"

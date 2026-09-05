@@ -181,6 +181,21 @@ export function calculateApprovalTelemetry(quote, discountRules = []) {
 /**
  * Execute an approval decision (Approve, Reject, Return for Revision)
  */
+// Which role(s) may act at each approval level, and which pending-approval
+// status on the quotation corresponds to that level being "up next".
+const APPROVAL_LEVEL_CONFIG = {
+  SALES_MANAGER: {
+    allowedRoles: ['SALES_MANAGER', 'ADMIN'],
+    pendingApprovalStatus: 'PENDING_MANAGER',
+    unauthorizedMessage: 'Unauthorized: Only Sales Managers or Administrators may act on manager approvals.',
+  },
+  FINANCE_OPERATIONS: {
+    allowedRoles: ['FINANCE_OPERATIONS', 'ADMIN'],
+    pendingApprovalStatus: 'PENDING_FINANCE',
+    unauthorizedMessage: 'Unauthorized: Only Finance & Operations or Administrators may act on finance approvals.',
+  },
+};
+
 export async function executeApprovalAction({
   quoteId,
   tenantId,
@@ -192,14 +207,20 @@ export async function executeApprovalAction({
   version,
   expectedVersion,
   revisedItems,
+  approverLevel = 'SALES_MANAGER',
 }) {
   if (!['APPROVE', 'REJECT', 'RETURN_FOR_REVISION'].includes(action)) {
     throw new Error(`Invalid approval action: ${action}`);
   }
 
-  // 1. Role Authorization check: Only SALES_MANAGER or ADMIN can execute manager approval decisions
-  if (userRole !== 'SALES_MANAGER' && userRole !== 'ADMIN') {
-    const error = new Error('Unauthorized: Only Sales Managers or Administrators may act on manager approvals.');
+  const levelConfig = APPROVAL_LEVEL_CONFIG[approverLevel];
+  if (!levelConfig) {
+    throw new Error(`Invalid approval level: ${approverLevel}`);
+  }
+
+  // 1. Role Authorization check: only the role(s) that own this approval level may act on it
+  if (!levelConfig.allowedRoles.includes(userRole)) {
+    const error = new Error(levelConfig.unauthorizedMessage);
     error.statusCode = 403;
     error.code = 'FORBIDDEN';
     throw error;
@@ -252,11 +273,12 @@ export async function executeApprovalAction({
   // 4. Current State Concurrency Verification (Requirement 6 step 8 & Requirement 16)
   const isPendingApproval =
     (quote.status === 'PENDING_APPROVAL' || quote.status === 'NEGOTIATION') &&
-    quote.approvalStatus === 'PENDING_MANAGER';
+    quote.approvalStatus === levelConfig.pendingApprovalStatus;
 
   if (!isPendingApproval) {
+    const levelLabel = approverLevel === 'FINANCE_OPERATIONS' ? 'Finance & Operations' : 'Sales Manager';
     const error = new Error(
-      `Quotation is no longer pending Sales Manager approval. Current status is ${quote.status} (${quote.approvalStatus}).`
+      `Quotation is no longer pending ${levelLabel} approval. Current status is ${quote.status} (${quote.approvalStatus}).`
     );
     error.statusCode = 409;
     error.code = 'STALE_APPROVAL_STATE';
@@ -331,7 +353,7 @@ export async function executeApprovalAction({
         id: quote.id,
         tenantId,
         status: quote.status,
-        approvalStatus: 'PENDING_MANAGER',
+        approvalStatus: levelConfig.pendingApprovalStatus,
       },
     });
 
@@ -350,12 +372,15 @@ export async function executeApprovalAction({
     let revisionNotes = quote.revisionNotes;
 
     if (action === 'APPROVE') {
-      // Check if multi-level approval is required (Requirement 7 & 12)
+      // Check if multi-level approval is required (Requirement 7 & 12).
+      // Only relevant when a Manager is approving — Finance is always the
+      // final stage in the chain, so a Finance approval finalizes the quote.
       const needsFinance =
-        quote.requiredApproverRole === 'SALES_MANAGER_THEN_FINANCE' ||
-        quote.requiredApproverRole === 'FINANCE_OPERATIONS' ||
-        freshRisk.requiredApproverRole === 'SALES_MANAGER_THEN_FINANCE' ||
-        freshRisk.requiredApproverRole === 'FINANCE_OPERATIONS';
+        approverLevel === 'SALES_MANAGER' &&
+        (quote.requiredApproverRole === 'SALES_MANAGER_THEN_FINANCE' ||
+          quote.requiredApproverRole === 'FINANCE_OPERATIONS' ||
+          freshRisk.requiredApproverRole === 'SALES_MANAGER_THEN_FINANCE' ||
+          freshRisk.requiredApproverRole === 'FINANCE_OPERATIONS');
 
       if (needsFinance) {
         newStatus = 'PENDING_APPROVAL';
@@ -379,8 +404,11 @@ export async function executeApprovalAction({
       } else {
         newStatus = 'APPROVED';
         newApprovalStatus = 'APPROVED';
-        auditAction = 'QUOTE_APPROVED';
-        responseMessage = 'Quotation approved successfully. Deal is ready for customer presentation.';
+        auditAction = approverLevel === 'FINANCE_OPERATIONS' ? 'FINANCE_APPROVED' : 'QUOTE_APPROVED';
+        responseMessage =
+          approverLevel === 'FINANCE_OPERATIONS'
+            ? 'Quotation approved by Finance & Operations. Deal is ready for customer presentation.'
+            : 'Quotation approved successfully. Deal is ready for customer presentation.';
       }
 
       // If approved, mark all pending proposals & change requests as resolved
@@ -417,7 +445,9 @@ export async function executeApprovalAction({
           revisedAt: new Date().toISOString(),
           comment: cleanComment,
         };
-        revisionNotes = cleanComment || 'Manager approved revised commercial terms.';
+        revisionNotes =
+          cleanComment ||
+          `${approverLevel === 'FINANCE_OPERATIONS' ? 'Finance & Operations' : 'Manager'} approved revised commercial terms.`;
 
         // Update database line items
         for (const it of quote.items) {
@@ -443,12 +473,15 @@ export async function executeApprovalAction({
     } else if (action === 'REJECT') {
       newStatus = 'REJECTED';
       newApprovalStatus = 'REJECTED';
-      auditAction = 'QUOTE_REJECTED';
+      auditAction = approverLevel === 'FINANCE_OPERATIONS' ? 'FINANCE_REJECTED' : 'QUOTE_REJECTED';
       responseMessage = 'Quotation rejected.';
     } else if (action === 'RETURN_FOR_REVISION') {
       newStatus = 'RETURNED_FOR_REVISION';
       newApprovalStatus = 'RETURNED_FOR_REVISION';
-      auditAction = 'QUOTE_RETURNED_FOR_REVISION';
+      auditAction =
+        approverLevel === 'FINANCE_OPERATIONS'
+          ? 'FINANCE_RETURNED_FOR_REVISION'
+          : 'QUOTE_RETURNED_FOR_REVISION';
       revisionNotes = cleanReason;
       responseMessage = 'Quotation returned to Sales Representative for revision.';
 
@@ -514,7 +547,7 @@ export async function executeApprovalAction({
         quotationId: quote.id,
         approverId: userId,
         approverRole: userRole,
-        level: 'SALES_MANAGER',
+        level: approverLevel,
         status: newApprovalStatus === 'PENDING_FINANCE' ? 'APPROVED' : newApprovalStatus,
         reason: cleanReason,
         comment: cleanComment,
@@ -564,6 +597,7 @@ export async function executeApprovalAction({
   });
 
   // Async notification dispatch
+  const approverLabel = approverLevel === 'FINANCE_OPERATIONS' ? 'Finance & Operations' : 'Manager';
   try {
     const { updatedQuote } = result;
     if (updatedQuote.approvalStatus === 'APPROVED') {
@@ -575,7 +609,7 @@ export async function executeApprovalAction({
           recipientRole: 'SALES_REP',
           type: 'QUOTE_APPROVED',
           title: `Quotation #${updatedQuote.quoteNumber} Approved`,
-          message: `Manager approved quotation #${updatedQuote.quoteNumber}. Total: ₹${updatedQuote.totalAmount}.`,
+          message: `${approverLabel} approved quotation #${updatedQuote.quoteNumber}. Total: ₹${updatedQuote.totalAmount}.`,
           entityType: 'QUOTATION',
           entityId: updatedQuote.id,
         });
@@ -601,7 +635,7 @@ export async function executeApprovalAction({
           recipientRole: 'SALES_REP',
           type: 'QUOTE_REJECTED',
           title: `Quotation #${updatedQuote.quoteNumber} Rejected`,
-          message: `Manager rejected quotation #${updatedQuote.quoteNumber}. Reason: ${cleanReason || 'No reason provided.'}`,
+          message: `${approverLabel} rejected quotation #${updatedQuote.quoteNumber}. Reason: ${cleanReason || 'No reason provided.'}`,
           entityType: 'QUOTATION',
           entityId: updatedQuote.id,
         });
@@ -614,7 +648,7 @@ export async function executeApprovalAction({
           recipientRole: 'SALES_REP',
           type: 'QUOTE_RETURNED',
           title: `Quotation #${updatedQuote.quoteNumber} Returned for Revision`,
-          message: `Manager requested revision for quotation #${updatedQuote.quoteNumber}. Reason: ${cleanReason || 'No reason provided.'}`,
+          message: `${approverLabel} requested revision for quotation #${updatedQuote.quoteNumber}. Reason: ${cleanReason || 'No reason provided.'}`,
           entityType: 'QUOTATION',
           entityId: updatedQuote.id,
         });

@@ -12,6 +12,7 @@
 
 import express from 'express';
 import prisma from '../../db/prisma.js';
+import redis from '../../config/redis.js';
 import { authenticateUser } from '../../middleware/auth.js';
 import { resolveTenant } from '../../middleware/tenant.js';
 import { requireRole } from '../../middleware/rbac.js';
@@ -33,6 +34,53 @@ router.use(resolveTenant);
 // Restrict to internal staff only (Admin, Sales Manager, Sales Rep, Finance/Ops)
 router.use(requireRole('ADMIN', 'SALES_MANAGER', 'SALES_REP', 'FINANCE_OPERATIONS'));
 
+// Short-TTL cache shared between the JSON /sales view and the PDF/XLSX
+// exporters, so clicking "export" right after viewing a report doesn't
+// recompute the same aggregations from scratch. 45s is long enough to cover
+// "view then export" without serving meaningfully stale numbers.
+const REPORT_BUNDLE_TTL_SECONDS = 45;
+
+function buildReportCacheKey(tenantId, filters) {
+  const normalized = Object.keys(filters || {})
+    .sort()
+    .reduce((acc, key) => {
+      if (filters[key] !== undefined && filters[key] !== '') acc[key] = filters[key];
+      return acc;
+    }, {});
+  return `report-bundle:${tenantId}:${JSON.stringify(normalized)}`;
+}
+
+async function getReportBundle(tenantId, filters) {
+  const cacheKey = buildReportCacheKey(tenantId, filters);
+
+  try {
+    const cached = await redis.get(cacheKey);
+    if (cached) {
+      return typeof cached === 'string' ? JSON.parse(cached) : cached;
+    }
+  } catch {
+    // Fall through and compute fresh on any cache-read error
+  }
+
+  const [summary, salesPerformance, approvals, products, financial] = await Promise.all([
+    getSalesReportSummary(tenantId, filters),
+    getSalesPerformanceReport(tenantId, filters),
+    getApprovalReport(tenantId, filters),
+    getProductCategoryReport(tenantId, filters),
+    getFinancialReport(tenantId, filters),
+  ]);
+
+  const bundle = { summary, salesPerformance, approvals, products, financial };
+
+  try {
+    await redis.set(cacheKey, JSON.stringify(bundle), REPORT_BUNDLE_TTL_SECONDS);
+  } catch {
+    // Non-fatal — just means the next request recomputes
+  }
+
+  return bundle;
+}
+
 /**
  * GET /api/reports/sales
  * Returns comprehensive sales performance dataset with summary KPIs
@@ -47,12 +95,7 @@ router.get('/sales', async (req, res, next) => {
       filters.salesRepId = req.user.id;
     }
 
-    const [summary, salesPerformance, approvals, products] = await Promise.all([
-      getSalesReportSummary(tenantId, filters),
-      getSalesPerformanceReport(tenantId, filters),
-      getApprovalReport(tenantId, filters),
-      getProductCategoryReport(tenantId, filters),
-    ]);
+    const { summary, salesPerformance, approvals, products } = await getReportBundle(tenantId, filters);
 
     res.json({
       success: true,
@@ -138,12 +181,9 @@ router.get('/export/pdf', async (req, res, next) => {
       filters.salesRepId = req.user.id;
     }
 
-    const [org, summary, salesPerformance, approvals, products] = await Promise.all([
+    const [org, { summary, salesPerformance, approvals, products }] = await Promise.all([
       prisma.organization.findUnique({ where: { id: tenantId } }),
-      getSalesReportSummary(tenantId, filters),
-      getSalesPerformanceReport(tenantId, filters),
-      getApprovalReport(tenantId, filters),
-      getProductCategoryReport(tenantId, filters),
+      getReportBundle(tenantId, filters),
     ]);
 
     const pdfBuffer = await generatePdfReport({
@@ -161,17 +201,18 @@ router.get('/export/pdf', async (req, res, next) => {
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.setHeader('Content-Length', pdfBuffer.length);
+    res.end(pdfBuffer);
 
-    await logAudit({
+    // Audit logging already fails soft and isn't needed by the client —
+    // don't make the download wait on one more remote DB write.
+    logAudit({
       tenantId,
       userId: req.user.id,
       action: 'REPORT_EXPORTED_PDF',
       entityType: 'REPORT',
       entityId: 'SALES_PERFORMANCE',
       metadata: { filename, filters: summary.appliedFilters },
-    });
-
-    res.end(pdfBuffer);
+    }).catch((err) => console.error('[REPORT_EXPORT_AUDIT_ERROR]:', err.message));
   } catch (err) {
     next(err);
   }
@@ -190,13 +231,9 @@ router.get('/export/xlsx', async (req, res, next) => {
       filters.salesRepId = req.user.id;
     }
 
-    const [org, summary, salesPerformance, approvals, products, financial] = await Promise.all([
+    const [org, { summary, salesPerformance, approvals, products, financial }] = await Promise.all([
       prisma.organization.findUnique({ where: { id: tenantId } }),
-      getSalesReportSummary(tenantId, filters),
-      getSalesPerformanceReport(tenantId, filters),
-      getApprovalReport(tenantId, filters),
-      getProductCategoryReport(tenantId, filters),
-      getFinancialReport(tenantId, filters),
+      getReportBundle(tenantId, filters),
     ]);
 
     const xlsxBuffer = await generateXlsxReport({
@@ -218,17 +255,18 @@ router.get('/export/xlsx', async (req, res, next) => {
     );
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.setHeader('Content-Length', xlsxBuffer.length);
+    res.end(xlsxBuffer);
 
-    await logAudit({
+    // Audit logging already fails soft and isn't needed by the client —
+    // don't make the download wait on one more remote DB write.
+    logAudit({
       tenantId,
       userId: req.user.id,
       action: 'REPORT_EXPORTED_XLSX',
       entityType: 'REPORT',
       entityId: 'SALES_PERFORMANCE',
       metadata: { filename, filters: summary.appliedFilters },
-    });
-
-    res.end(xlsxBuffer);
+    }).catch((err) => console.error('[REPORT_EXPORT_AUDIT_ERROR]:', err.message));
   } catch (err) {
     next(err);
   }

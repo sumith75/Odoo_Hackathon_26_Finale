@@ -9,9 +9,14 @@ const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'dealflow360-secret-key-2025';
 const JWT_EXPIRES = '24h';
 
+// Customer-portal tokens carry a distinct audience claim from internal-user
+// tokens. The auth middleware uses this to keep the two token populations
+// structurally separate — a customer token can never resolve as an internal
+// user (or vice versa), even though both are signed with the same secret.
 function generateToken(user) {
+  const audience = user.role === 'CUSTOMER' ? 'customer-portal' : 'internal';
   return jwt.sign(
-    { id: user.id, email: user.email, role: user.role, tenantId: user.tenantId },
+    { id: user.id, email: user.email, role: user.role, tenantId: user.tenantId, aud: audience },
     JWT_SECRET,
     { expiresIn: JWT_EXPIRES }
   );
@@ -288,6 +293,18 @@ router.post('/login', async (req, res) => {
 
     if (user) {
       if (user.status !== 'ACTIVE') {
+        await logAudit({
+          tenantId: user.tenantId,
+          userId: user.id,
+          actorRole: user.role,
+          action: 'LOGIN_FAILED',
+          entityType: 'USER',
+          entityId: user.id,
+          description: 'Login attempt on deactivated account',
+          metadata: { email: cleanEmail },
+          ipAddress: req.ip,
+          userAgent: req.get('user-agent'),
+        });
         return res.status(403).json({
           success: false,
           error: { code: 'ACCOUNT_DEACTIVATED', message: 'Your account has been deactivated. Please contact your administrator.' },
@@ -296,6 +313,18 @@ router.post('/login', async (req, res) => {
 
       const match = await bcrypt.compare(password, user.passwordHash);
       if (!match) {
+        await logAudit({
+          tenantId: user.tenantId,
+          userId: user.id,
+          actorRole: user.role,
+          action: 'LOGIN_FAILED',
+          entityType: 'USER',
+          entityId: user.id,
+          description: 'Incorrect password',
+          metadata: { email: cleanEmail },
+          ipAddress: req.ip,
+          userAgent: req.get('user-agent'),
+        });
         return res.status(401).json({
           success: false,
           error: { code: 'INVALID_CREDENTIALS', message: 'Incorrect email or password.' },
@@ -325,6 +354,18 @@ router.post('/login', async (req, res) => {
       const token = generateToken(safeUser);
       console.log(`🔑 [AUTH] Login success: ${safeUser.name} <${safeUser.email}> [${safeUser.role}] — ${safeUser.organizationName}`);
 
+      await logAudit({
+        tenantId: user.tenantId,
+        userId: user.id,
+        actorRole: user.role,
+        action: 'LOGIN_SUCCESS',
+        entityType: 'USER',
+        entityId: user.id,
+        metadata: { email: cleanEmail },
+        ipAddress: req.ip,
+        userAgent: req.get('user-agent'),
+      });
+
       return res.json({
         success: true,
         token,
@@ -343,6 +384,17 @@ router.post('/login', async (req, res) => {
       if (customer.passwordHash) {
         const match = await bcrypt.compare(password, customer.passwordHash);
         if (!match) {
+          await logAudit({
+            tenantId: customer.tenantId,
+            actorRole: 'CUSTOMER',
+            action: 'LOGIN_FAILED',
+            entityType: 'CUSTOMER',
+            entityId: customer.id,
+            description: 'Incorrect password',
+            metadata: { email: cleanEmail },
+            ipAddress: req.ip,
+            userAgent: req.get('user-agent'),
+          });
           return res.status(401).json({
             success: false,
             error: { code: 'INVALID_CREDENTIALS', message: 'Incorrect email or password.' },
@@ -366,6 +418,17 @@ router.post('/login', async (req, res) => {
 
       const token = generateToken(safeCustomer);
       console.log(`🔑 [AUTH] Customer login: ${safeCustomer.name} <${safeCustomer.email}> [CUSTOMER]`);
+
+      await logAudit({
+        tenantId: customer.tenantId,
+        actorRole: 'CUSTOMER',
+        action: 'LOGIN_SUCCESS',
+        entityType: 'CUSTOMER',
+        entityId: customer.id,
+        metadata: { email: cleanEmail },
+        ipAddress: req.ip,
+        userAgent: req.get('user-agent'),
+      });
 
       return res.json({
         success: true,

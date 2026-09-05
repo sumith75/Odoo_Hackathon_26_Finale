@@ -11,12 +11,30 @@ export const ROLE_DEFAULT_VIEW = {
   CUSTOMER: 'customer',
 };
 
-export function AuthProvider({ children }) {
-  const [user, setUser] = useState(null);
-  const [token, setToken] = useState(() => localStorage.getItem('df360_token') || null);
-  const [isLoading, setIsLoading] = useState(true);
+function getCachedUser() {
+  try {
+    const raw = localStorage.getItem('df360_user');
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
 
-  // Restore session on mount
+export function AuthProvider({ children }) {
+  const [user, setUser] = useState(() => getCachedUser());
+  const [token, setToken] = useState(() => localStorage.getItem('df360_token') || null);
+  // Render optimistically from the cached session instead of blocking every
+  // page load on a network round-trip: only show the loading state when
+  // there's a token but no cached user yet to render from (first-ever visit
+  // with a token, or the cache was cleared).
+  const [isLoading, setIsLoading] = useState(() => {
+    const savedToken = localStorage.getItem('df360_token');
+    return Boolean(savedToken) && !getCachedUser();
+  });
+
+  // Validate the session in the background on mount. When cached user data
+  // was already rendered optimistically above, this only reconciles state —
+  // it doesn't gate the initial paint.
   useEffect(() => {
     const initAuth = async () => {
       const savedToken = localStorage.getItem('df360_token');
@@ -29,6 +47,7 @@ export function AuthProvider({ children }) {
           if (res.ok && data.success && data.user) {
             setUser(data.user);
             setToken(savedToken);
+            localStorage.setItem('df360_user', JSON.stringify(data.user));
           } else {
             localStorage.removeItem('df360_token');
             localStorage.removeItem('df360_user');
@@ -36,12 +55,8 @@ export function AuthProvider({ children }) {
             setToken(null);
           }
         } catch {
-          const savedUser = localStorage.getItem('df360_user');
-          if (savedUser) {
-            try {
-              setUser(JSON.parse(savedUser));
-            } catch {}
-          }
+          // Network/backend hiccup — keep whatever was already rendered from
+          // cache rather than signing the user out over a transient failure.
         }
       }
       setIsLoading(false);

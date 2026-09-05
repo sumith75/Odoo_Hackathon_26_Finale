@@ -23,7 +23,7 @@ import {
   Activity,
 } from 'lucide-react';
 
-export default function ApprovalDetails({ quoteId, onBack, onActionCompleted }) {
+export default function ApprovalDetails({ quoteId, onBack, onActionCompleted, apiBase = '/api/manager' }) {
   const { user } = useAuth();
   const currency = user?.currency || 'INR';
 
@@ -42,7 +42,7 @@ export default function ApprovalDetails({ quoteId, onBack, onActionCompleted }) 
     setLoading(true);
     setError('');
     try {
-      const res = await fetchWithAuth(`/api/manager/approvals/${quoteId}`);
+      const res = await fetchWithAuth(`${apiBase}/approvals/${quoteId}`);
       if (res.success) {
         setData(res.data);
       } else {
@@ -69,7 +69,7 @@ export default function ApprovalDetails({ quoteId, onBack, onActionCompleted }) 
 
     setSubmittingAction(true);
     try {
-      let endpoint = `/api/manager/approvals/${quoteId}/`;
+      let endpoint = `${apiBase}/approvals/${quoteId}/`;
       let body = {
         expectedVersion: data?.quote?.version,
         version: data?.quote?.version,

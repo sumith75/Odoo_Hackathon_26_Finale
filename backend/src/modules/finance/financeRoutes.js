@@ -3,14 +3,26 @@ import prisma from '../../db/prisma.js';
 import { authenticateUser } from '../../middleware/auth.js';
 import { requireRole } from '../../middleware/rbac.js';
 import { resolveTenant } from '../../middleware/tenant.js';
-import { autoAllocateInventory } from '../../services/inventoryAllocationService.js';
+import {
+  autoAllocateInventory,
+  getBackorderStatus,
+  consolidateBackorder,
+  overrideAllocation,
+} from '../../services/inventoryAllocationService.js';
 import { fulfillAllocations } from '../../services/fulfillmentService.js';
 import {
   generateOneTimeInvoice,
   generateRecurringInvoice,
   calculateHybridBilling,
+  changeSubscriptionQuantity,
+  cancelSubscription,
 } from '../../services/billingService.js';
 import { simulateInvoicePayment } from '../../services/paymentService.js';
+import {
+  calculateApprovalTelemetry,
+  executeApprovalAction,
+} from '../../services/approvalService.js';
+import { getDealHealth, invalidateDealHealthCache } from '../../services/dealHealthService.js';
 
 const router = express.Router();
 
@@ -320,8 +332,11 @@ router.post('/fulfillment/:quotationId/allocate', async (req, res) => {
     const { quotationId } = req.params;
     const tenantId = req.tenantId;
     const actorUserId = req.user.id;
+    const { allowPartial } = req.body || {};
 
-    const result = await autoAllocateInventory(tenantId, quotationId, actorUserId);
+    const result = await autoAllocateInventory(tenantId, quotationId, actorUserId, {
+      allowPartial: Boolean(allowPartial),
+    });
 
     res.json({
       success: true,
@@ -340,6 +355,58 @@ router.post('/fulfillment/:quotationId/allocate', async (req, res) => {
         message: error.message,
         details: error.details,
       },
+    });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 5b. GET /api/finance/fulfillment/:quotationId/backorder-status
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/fulfillment/:quotationId/backorder-status', async (req, res) => {
+  try {
+    const { quotationId } = req.params;
+    const result = await getBackorderStatus(req.tenantId, quotationId);
+    res.json({ success: true, data: result });
+  } catch (error) {
+    console.error('Error checking backorder status:', error);
+    res.status(error.statusCode || 500).json({
+      success: false,
+      error: { code: error.code || 'BACKORDER_STATUS_ERROR', message: error.message },
+    });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 5c. POST /api/finance/fulfillment/:quotationId/consolidate-backorder
+// ─────────────────────────────────────────────────────────────────────────────
+router.post('/fulfillment/:quotationId/consolidate-backorder', async (req, res) => {
+  try {
+    const { quotationId } = req.params;
+    const result = await consolidateBackorder(req.tenantId, quotationId, req.user.id);
+    res.json({ success: true, data: result, message: result.message });
+  } catch (error) {
+    console.error('Error consolidating backorder:', error);
+    res.status(error.statusCode || 400).json({
+      success: false,
+      error: { code: error.code || 'CONSOLIDATE_ERROR', message: error.message },
+    });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 5d. POST /api/finance/fulfillment/:quotationId/allocate-override
+// ─────────────────────────────────────────────────────────────────────────────
+router.post('/fulfillment/:quotationId/allocate-override', async (req, res) => {
+  try {
+    const { quotationId } = req.params;
+    const { allocations } = req.body || {};
+    const result = await overrideAllocation(req.tenantId, quotationId, req.user.id, allocations);
+    res.json({ success: true, data: result, message: result.message });
+  } catch (error) {
+    console.error('Error overriding allocation:', error);
+    res.status(error.statusCode || 400).json({
+      success: false,
+      error: { code: error.code || 'OVERRIDE_ERROR', message: error.message },
     });
   }
 });
@@ -588,6 +655,298 @@ router.post('/subscriptions/:id/bill', async (req, res) => {
         code: error.code || 'RECURRING_BILLING_ERROR',
         message: error.message,
       },
+    });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 13. GET /api/finance/approvals — Finance Approval Inbox (PENDING_FINANCE queue)
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/approvals', async (req, res) => {
+  try {
+    const { status = 'PENDING', riskLevel, search, page = 1, limit = 25 } = req.query;
+
+    const where = { tenantId: req.tenantId };
+
+    if (status === 'PENDING') {
+      where.status = { in: ['PENDING_APPROVAL', 'NEGOTIATION'] };
+      where.approvalStatus = 'PENDING_FINANCE';
+    } else if (status === 'APPROVED') {
+      where.approvalStatus = 'APPROVED';
+    } else if (status === 'REJECTED') {
+      where.status = 'REJECTED';
+    } else if (status === 'RETURNED') {
+      where.status = 'RETURNED_FOR_REVISION';
+    }
+
+    if (riskLevel && riskLevel !== 'ALL') {
+      where.riskLevel = riskLevel.toUpperCase();
+    }
+
+    if (search && search.trim()) {
+      const q = search.trim();
+      where.OR = [
+        { quoteNumber: { contains: q, mode: 'insensitive' } },
+        { customer: { name: { contains: q, mode: 'insensitive' } } },
+        { customer: { companyName: { contains: q, mode: 'insensitive' } } },
+      ];
+    }
+
+    const take = Math.min(100, Math.max(1, parseInt(limit, 10) || 25));
+    const skip = (Math.max(1, parseInt(page, 10) || 1) - 1) * take;
+
+    const [total, quotations, discountRules] = await Promise.all([
+      prisma.quotation.count({ where }),
+      prisma.quotation.findMany({
+        where,
+        orderBy: [{ riskScore: 'desc' }, { createdAt: 'asc' }],
+        skip,
+        take,
+        include: {
+          customer: { select: { id: true, name: true, companyName: true, tier: true } },
+          salesRep: { select: { id: true, name: true, email: true } },
+          items: true,
+        },
+      }),
+      prisma.discountRule.findMany({ where: { tenantId: req.tenantId, isActive: true } }),
+    ]);
+
+    const enrichedQuotations = quotations.map((quote) => {
+      const telemetry = calculateApprovalTelemetry(quote, discountRules);
+      const waitingTimeMs = Date.now() - new Date(quote.updatedAt).getTime();
+      const waitingHours = Math.floor(waitingTimeMs / (1000 * 60 * 60));
+      const waitingMinutes = Math.floor((waitingTimeMs % (1000 * 60 * 60)) / (1000 * 60));
+
+      return {
+        ...quote,
+        waitingTime: `${waitingHours}h ${waitingMinutes}m`,
+        violationsCount: telemetry.violations.length,
+        violations: telemetry.violations,
+        marginDeltaPercentage: telemetry.marginDelta.marginDeltaPercentage,
+        marginImpactAmount: telemetry.marginDelta.marginImpactAmount,
+        baseMarginPercentage: telemetry.marginDelta.baseMarginPercentage,
+        isReapproval: telemetry.comparison.isReapproval,
+      };
+    });
+
+    res.json({
+      success: true,
+      data: enrichedQuotations,
+      pagination: {
+        total,
+        page: parseInt(page, 10) || 1,
+        limit: take,
+        totalPages: Math.ceil(total / take),
+      },
+    });
+  } catch (error) {
+    console.error('[FINANCE_APPROVALS] Fetch error:', error);
+    res.status(500).json({
+      success: false,
+      error: { code: 'FETCH_ERROR', message: 'Failed to retrieve finance approval inbox.' },
+    });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 14. GET /api/finance/approvals/:id — Finance Approval Dossier
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/approvals/:id', async (req, res) => {
+  try {
+    const quote = await prisma.quotation.findFirst({
+      where: { id: req.params.id, tenantId: req.tenantId },
+      include: {
+        customer: true,
+        salesRep: { select: { id: true, name: true, email: true, phone: true } },
+        items: { include: { product: true } },
+        approvals: {
+          orderBy: { createdAt: 'desc' },
+          include: { approver: { select: { id: true, name: true, role: true } } },
+        },
+        invoices: true,
+        subscriptions: true,
+        warehouseAllocations: true,
+        negotiationProposals: true,
+      },
+    });
+
+    if (!quote) {
+      return res.status(404).json({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'Quotation not found in organization.' },
+      });
+    }
+
+    const [discountRules, auditLogs, health] = await Promise.all([
+      prisma.discountRule.findMany({ where: { tenantId: req.tenantId, isActive: true } }),
+      prisma.auditLog.findMany({
+        where: { tenantId: req.tenantId, entityId: quote.id },
+        orderBy: { createdAt: 'asc' },
+        include: { user: { select: { id: true, name: true, role: true } } },
+      }),
+      getDealHealth(quote.id, req.tenantId),
+    ]);
+
+    const telemetry = calculateApprovalTelemetry(quote, discountRules);
+
+    res.json({
+      success: true,
+      data: {
+        quote,
+        telemetry,
+        auditHistory: auditLogs,
+        dealHealth: health,
+      },
+    });
+  } catch (error) {
+    console.error('[FINANCE_APPROVAL_DETAIL] Error:', error);
+    res.status(500).json({
+      success: false,
+      error: { code: 'FETCH_ERROR', message: 'Failed to retrieve quotation approval dossier.' },
+    });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 15. POST /api/finance/approvals/:id/approve
+// ─────────────────────────────────────────────────────────────────────────────
+router.post('/approvals/:id/approve', async (req, res) => {
+  try {
+    const { comment, version, expectedVersion } = req.body;
+    const result = await executeApprovalAction({
+      quoteId: req.params.id,
+      tenantId: req.tenantId,
+      userId: req.user.id,
+      userRole: req.user.role,
+      action: 'APPROVE',
+      comment,
+      version,
+      expectedVersion,
+      approverLevel: 'FINANCE_OPERATIONS',
+    });
+
+    await invalidateDealHealthCache(req.tenantId, req.params.id);
+
+    res.json({
+      success: true,
+      message: result.responseMessage,
+      data: result.updatedQuote,
+    });
+  } catch (error) {
+    console.error('[FINANCE_APPROVE] Error:', error);
+    const statusCode = error.statusCode || 500;
+    res.status(statusCode).json({
+      success: false,
+      error: { code: error.code || 'APPROVE_ERROR', message: error.message },
+      message: error.message,
+    });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 16. POST /api/finance/approvals/:id/reject
+// ─────────────────────────────────────────────────────────────────────────────
+router.post('/approvals/:id/reject', async (req, res) => {
+  try {
+    const { reason, version, expectedVersion } = req.body;
+    const result = await executeApprovalAction({
+      quoteId: req.params.id,
+      tenantId: req.tenantId,
+      userId: req.user.id,
+      userRole: req.user.role,
+      action: 'REJECT',
+      reason,
+      version,
+      expectedVersion,
+      approverLevel: 'FINANCE_OPERATIONS',
+    });
+
+    await invalidateDealHealthCache(req.tenantId, req.params.id);
+
+    res.json({
+      success: true,
+      message: result.responseMessage,
+      data: result.updatedQuote,
+    });
+  } catch (error) {
+    console.error('[FINANCE_REJECT] Error:', error);
+    const statusCode = error.statusCode || 500;
+    res.status(statusCode).json({
+      success: false,
+      error: { code: error.code || 'REJECT_ERROR', message: error.message },
+      message: error.message,
+    });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 17. POST /api/finance/approvals/:id/return-for-revision
+// ─────────────────────────────────────────────────────────────────────────────
+router.post('/approvals/:id/return-for-revision', async (req, res) => {
+  try {
+    const { reason, version, expectedVersion } = req.body;
+    const result = await executeApprovalAction({
+      quoteId: req.params.id,
+      tenantId: req.tenantId,
+      userId: req.user.id,
+      userRole: req.user.role,
+      action: 'RETURN_FOR_REVISION',
+      reason,
+      version,
+      expectedVersion,
+      approverLevel: 'FINANCE_OPERATIONS',
+    });
+
+    await invalidateDealHealthCache(req.tenantId, req.params.id);
+
+    res.json({
+      success: true,
+      message: result.responseMessage,
+      data: result.updatedQuote,
+    });
+  } catch (error) {
+    console.error('[FINANCE_RETURN_REVISION] Error:', error);
+    const statusCode = error.statusCode || 500;
+    res.status(statusCode).json({
+      success: false,
+      error: { code: error.code || 'RETURN_ERROR', message: error.message },
+      message: error.message,
+    });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 18. PATCH /api/finance/subscriptions/:id — Mid-Cycle Quantity Change (Proration)
+// ─────────────────────────────────────────────────────────────────────────────
+router.patch('/subscriptions/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { quantity, reason } = req.body || {};
+    const result = await changeSubscriptionQuantity(req.tenantId, id, quantity, req.user.id, reason);
+    res.json({ success: true, data: result, message: result.message });
+  } catch (error) {
+    console.error('Error changing subscription quantity:', error);
+    res.status(error.statusCode || 400).json({
+      success: false,
+      error: { code: error.code || 'PRORATION_ERROR', message: error.message },
+    });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 19. POST /api/finance/subscriptions/:id/cancel — Cancel with Unused-Time Credit
+// ─────────────────────────────────────────────────────────────────────────────
+router.post('/subscriptions/:id/cancel', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { reason } = req.body || {};
+    const result = await cancelSubscription(req.tenantId, id, req.user.id, reason);
+    res.json({ success: true, data: result, message: result.message });
+  } catch (error) {
+    console.error('Error cancelling subscription:', error);
+    res.status(error.statusCode || 400).json({
+      success: false,
+      error: { code: error.code || 'CANCELLATION_ERROR', message: error.message },
     });
   }
 });

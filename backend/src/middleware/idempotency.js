@@ -1,6 +1,7 @@
 // Production Idempotency Middleware (Requirement 9)
 // Prevents duplicate charges, duplicate inventory allocations, and double invoice creation across clustered nodes.
 
+import crypto from 'crypto';
 import redis from '../config/redis.js';
 
 const IDEMPOTENCY_TTL_SECONDS = 86400; // 24 hours
@@ -16,7 +17,14 @@ export async function idempotencyMiddleware(req, res, next) {
     return next();
   }
 
-  const redisKey = `idempotency:${key}`;
+  // This middleware runs before authentication, so req.user/tenantId aren't
+  // resolved yet. Scope the cache key by a hash of the raw bearer token
+  // instead — each caller's token is unique, so two different users (or
+  // tenants) reusing the same client-supplied Idempotency-Key can never
+  // collide and replay each other's cached response.
+  const authHeader = req.headers.authorization || '';
+  const identityHash = crypto.createHash('sha256').update(authHeader).digest('hex').slice(0, 16);
+  const redisKey = `idempotency:${identityHash}:${key}`;
 
   try {
     // Check if key has already been processed in distributed cache

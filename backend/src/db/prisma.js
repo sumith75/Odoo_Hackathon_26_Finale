@@ -8,7 +8,9 @@
  */
 
 import 'dotenv/config';
-import { PrismaClient } from '@prisma/client';
+// import { PrismaClient } from '@prisma/client';
+import pkg from '@prisma/client';
+const { PrismaClient } = pkg;
 import { PrismaPg } from '@prisma/adapter-pg';
 import pg from 'pg';
 
@@ -17,7 +19,10 @@ const globalForPrisma = globalThis;
 let prisma = globalForPrisma.prisma;
 
 if (!prisma) {
-  const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+  const pool = new pg.Pool({
+    connectionString: process.env.DATABASE_URL,
+    max: Number(process.env.DATABASE_POOL_MAX) || 10,
+  });
   const adapter = new PrismaPg(pool);
   prisma = new PrismaClient({
     adapter,

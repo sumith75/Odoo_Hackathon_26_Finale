@@ -223,11 +223,37 @@ router.get(['/dashboard', '/approvals/dashboard'], async (req, res) => {
       0
     );
 
+    // Per-rep historical average discount, computed in-memory from this same
+    // timeframe's quotations, so the discount-anomaly signal below doesn't
+    // require a separate DB round trip per deal in this bulk listing.
+    const repDiscountTotals = {};
+    for (const q of allQuotations) {
+      const subtotal = parseFloat(q.subtotal || 0);
+      if (!q.salesRepId || subtotal <= 0 || q.status === 'DRAFT') continue;
+      if (!repDiscountTotals[q.salesRepId]) {
+        repDiscountTotals[q.salesRepId] = { sumPercentage: 0, count: 0 };
+      }
+      repDiscountTotals[q.salesRepId].sumPercentage +=
+        (parseFloat(q.discountAmount || 0) / subtotal) * 100;
+      repDiscountTotals[q.salesRepId].count += 1;
+    }
+    const repBaselines = {};
+    for (const [repId, agg] of Object.entries(repDiscountTotals)) {
+      if (agg.count >= 3) {
+        repBaselines[repId] = {
+          averagePercentage: Math.round((agg.sumPercentage / agg.count) * 100) / 100,
+          sampleSize: agg.count,
+        };
+      }
+    }
+
     // Compute Deal Health for open quotations to build "Deals Requiring Attention"
     const dealsHealthEvaluated = allQuotations
       .filter((q) => !['PAID', 'CANCELLED'].includes(q.status))
       .map((quote) => {
-        const health = calculateDealHealth(quote);
+        const health = calculateDealHealth(quote, {
+          repDiscountBaseline: repBaselines[quote.salesRepId] || null,
+        });
         return {
           id: quote.id,
           quoteNumber: quote.quoteNumber,

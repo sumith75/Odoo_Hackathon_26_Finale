@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  Settings, ShoppingCart, ShieldCheck, UserCheck, Warehouse, 
-  Receipt, BarChart3, RotateCcw, Database, Sparkles, Play, LogOut, User, Check
+import {
+  LayoutDashboard, FileText, CheckSquare, Package,
+  RefreshCcw, Receipt, HeartPulse, BarChart2,
+  ShoppingBag, LogOut, ChevronDown, RotateCcw, Menu, X
 } from 'lucide-react';
 
 import { AuthProvider, useAuth, GOOGLE_PERSONAS } from './context/AuthContext';
 import LoginView from './components/LoginView';
-import JudgeStepper from './components/JudgeStepper';
 import AdminView from './components/AdminView';
 import SalesRepCPQView from './components/SalesRepCPQView';
 import ApprovalInboxView from './components/ApprovalInboxView';
@@ -15,328 +15,271 @@ import WarehouseFulfillmentView from './components/WarehouseFulfillmentView';
 import BillingCheckoutView from './components/BillingCheckoutView';
 import DashboardView from './components/DashboardView';
 
+// ── Nav configuration ────────────────────────────────────
+const NAV_ITEMS = [
+  { id: 'dashboard',   label: 'Dashboard',     icon: LayoutDashboard, roles: ['ADMIN','SALES_REP','SALES_MANAGER','FINANCE_OPERATIONS'] },
+  { id: 'sales',       label: 'Quotations',    icon: FileText,         roles: ['ADMIN','SALES_REP','SALES_MANAGER'] },
+  { id: 'manager',     label: 'Approvals',     icon: CheckSquare,      roles: ['ADMIN','SALES_MANAGER'] },
+  { id: 'operations',  label: 'Fulfillment',   icon: Package,          roles: ['ADMIN','FINANCE_OPERATIONS'] },
+  { id: 'billing',     label: 'Subscriptions', icon: RefreshCcw,       roles: ['ADMIN','FINANCE_OPERATIONS'] },
+  { id: 'invoices',    label: 'Invoices',      icon: Receipt,          roles: ['ADMIN','FINANCE_OPERATIONS'] },
+  { id: 'health',      label: 'Deal Health',   icon: HeartPulse,       roles: ['ADMIN','SALES_MANAGER'] },
+  { id: 'reports',     label: 'Reports',       icon: BarChart2,        roles: ['ADMIN','SALES_MANAGER','FINANCE_OPERATIONS'] },
+  { id: 'admin',       label: 'Products',      icon: ShoppingBag,      roles: ['ADMIN'] },
+  // Customer-only
+  { id: 'customer',    label: 'My Quotes',     icon: FileText,         roles: ['CUSTOMER'] },
+];
+
+const ROLE_COLORS = {
+  ADMIN:              'bg-emerald-400/15 text-emerald-300 ring-1 ring-emerald-400/30',
+  SALES_REP:          'bg-teal-400/15 text-teal-300 ring-1 ring-teal-400/30',
+  SALES_MANAGER:      'bg-lime-400/15 text-lime-300 ring-1 ring-lime-400/30',
+  FINANCE_OPERATIONS: 'bg-green-400/15 text-green-300 ring-1 ring-green-400/30',
+  CUSTOMER:           'bg-emerald-900 text-emerald-200 ring-1 ring-emerald-700',
+};
+
 function DealFlowApp() {
   const { user, isAuthenticated, isLoading, logout, switchRole, personas } = useAuth();
-  const [activeTab, setActiveTab] = useState('sales');
-  const [currentJudgeStep, setCurrentJudgeStep] = useState(1);
-  const [isAutoPlaying, setIsAutoPlaying] = useState(false);
+  const [activeTab, setActiveTab]     = useState('sales');
   const [activeQuoteId, setActiveQuoteId] = useState(null);
-  const [dbStatus, setDbStatus] = useState(null);
-  const [prefillExcessive, setPrefillExcessive] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [userMenuOpen, setUserMenuOpen]   = useState(false);
 
-  // Sync activeTab when user logs in or switches role
+  // Sync tab on role switch
   useEffect(() => {
-    if (user?.tab) {
-      setActiveTab(user.tab);
-    }
+    if (user?.tab) setActiveTab(user.tab);
   }, [user?.role]);
 
-  // Fetch health & db status on load
-  useEffect(() => {
-    fetch('/api/health')
-      .then(r => r.json())
-      .then(d => {
-        if (d.database) setDbStatus(d.database);
-      })
-      .catch(err => console.error('Health check failed:', err));
-  }, []);
+  // Only show nav items the current role can access
+  const visibleNav = NAV_ITEMS.filter(item =>
+    user?.role && item.roles.includes(user.role)
+  );
 
   const handleRoleSwitch = async (roleObj) => {
     await switchRole(roleObj);
     setActiveTab(roleObj.tab);
+    setUserMenuOpen(false);
   };
-
-  // Map 15-step ID to active view tab & role
-  const activateStep = (stepId) => {
-    setCurrentJudgeStep(stepId);
-    switch (stepId) {
-      case 1:
-      case 2:
-        handleRoleSwitch(personas[0]); // Admin
-        setActiveTab('admin');
-        break;
-      case 3:
-        handleRoleSwitch(personas[1]); // Sales Rep
-        setActiveTab('sales');
-        setPrefillExcessive(false);
-        break;
-      case 4:
-      case 5:
-        handleRoleSwitch(personas[1]); // Sales Rep
-        setActiveTab('sales');
-        setPrefillExcessive(true);
-        break;
-      case 6:
-        handleRoleSwitch(personas[2]); // Manager
-        setActiveTab('manager');
-        break;
-      case 7:
-        handleRoleSwitch(personas[1]); // Sales Rep
-        setActiveTab('sales');
-        break;
-      case 8:
-        handleRoleSwitch(personas[3]); // Operations
-        setActiveTab('operations');
-        break;
-      case 9:
-        handleRoleSwitch(personas[3]); // Finance
-        setActiveTab('billing');
-        break;
-      case 10:
-      case 11:
-        handleRoleSwitch(personas[4]); // Customer
-        setActiveTab('customer');
-        break;
-      case 12:
-        handleRoleSwitch(personas[2]); // Manager
-        setActiveTab('manager');
-        break;
-      case 13:
-        handleRoleSwitch(personas[4]); // Customer
-        setActiveTab('customer');
-        break;
-      case 14:
-        handleRoleSwitch(personas[3]); // Finance
-        setActiveTab('billing');
-        break;
-      case 15:
-        setActiveTab('dashboard');
-        break;
-      default:
-        setActiveTab('sales');
-    }
-  };
-
-  const handleNextStep = () => {
-    const next = currentJudgeStep < 15 ? currentJudgeStep + 1 : 1;
-    activateStep(next);
-  };
-
-  // Auto-play timer
-  useEffect(() => {
-    let timer;
-    if (isAutoPlaying) {
-      timer = setInterval(() => {
-        setCurrentJudgeStep(prev => {
-          const next = prev < 15 ? prev + 1 : 1;
-          activateStep(next);
-          if (next === 15) {
-            setIsAutoPlaying(false);
-          }
-          return next;
-        });
-      }, 4000);
-    }
-    return () => clearInterval(timer);
-  }, [isAutoPlaying]);
 
   const handleResetDemo = async () => {
     try {
       await fetch('/api/admin/reset', { method: 'POST' });
       setActiveQuoteId(null);
-      setCurrentJudgeStep(1);
-      setActiveTab('sales');
       window.location.reload();
     } catch (err) {
       console.error('Reset failed:', err);
     }
   };
 
-  // Loading Splash Screen
+  // Loading state
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-slate-400">
-        <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mb-3" />
-        <span className="text-xs font-semibold uppercase tracking-wider">Verifying Enterprise Session...</span>
+      <div className="min-h-screen bg-emerald-950 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-8 h-8 border-2 border-green-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+          <p className="text-sm text-gray-500">Loading...</p>
+        </div>
       </div>
     );
   }
 
-  // Unauthenticated Gate: Show Google Auth Login View
+  // Login gate
   if (!isAuthenticated || !user) {
     return <LoginView onLoginSuccess={(tab) => { if (tab) setActiveTab(tab); }} />;
   }
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100 font-sans">
-      {/* Top Enterprise Header */}
-      <header className="sticky top-0 z-50 bg-slate-900/90 border-b border-slate-800/80 backdrop-blur-xl px-4 md:px-6 py-2.5 flex items-center justify-between shadow-lg">
-        {/* Brand Badge */}
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg shadow-indigo-500/20">
-            <Sparkles size={20} className="text-white" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-base font-extrabold tracking-tight bg-gradient-to-r from-white via-slate-200 to-indigo-300 bg-clip-text text-transparent leading-none">
-                DealFlow360
-              </h1>
-              <span className="hidden sm:inline-block text-[10px] px-2 py-0.5 rounded-full bg-indigo-950/80 border border-indigo-700/50 text-indigo-300 font-bold uppercase">
-                Enterprise
-              </span>
-            </div>
-            <span className="text-[11px] text-slate-400 font-medium hidden sm:block">
-              Smart Self-Governing Deal Management Engine
-            </span>
-          </div>
-        </div>
+    <div className="min-h-screen bg-transparent flex flex-col">
 
-        {/* 5 User Roles Bar (Section 2 & 45) */}
-        <div className="hidden lg:flex items-center gap-1 bg-slate-950/60 p-1 rounded-xl border border-slate-800">
-          <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider px-2">
-            Persona:
-          </span>
-          {personas.map(r => {
-            const isCurrent = user.role === r.role;
-            return (
-              <button
-                key={r.role}
-                onClick={() => handleRoleSwitch(r)}
-                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
-                  isCurrent 
-                    ? 'bg-indigo-600/30 text-indigo-200 border border-indigo-500/40 shadow-sm' 
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-                }`}
-                title={`Switch to ${r.name} (${r.title})`}
-              >
-                <img src={r.avatar} alt={r.name} className="w-4 h-4 rounded-full object-cover" />
-                <span>{r.badge}</span>
-              </button>
-            );
-          })}
-        </div>
+      {/* ── Top Header ─────────────────────────────────── */}
+      <header className="bg-emerald-950/90 border-b border-emerald-800/70 sticky top-0 z-40 backdrop-blur-md">
+        <div className="flex items-center justify-between px-4 md:px-6 h-14">
 
-        {/* User Profile & Actions */}
-        <div className="flex items-center gap-3">
-          {/* Current Authenticated User Chip */}
-          <div className="flex items-center gap-2.5 bg-slate-800/50 px-3 py-1.5 rounded-xl border border-slate-700/60">
-            <img 
-              src={user.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80'} 
-              alt={user.name} 
-              className="w-6 h-6 rounded-full object-cover border border-indigo-400/50"
-            />
-            <div className="text-left hidden md:block">
-              <div className="text-xs font-bold text-white flex items-center gap-1.5 leading-none">
-                <span>{user.name.split(' ')[0]}</span>
-                <span className="text-[9px] px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 font-semibold uppercase">
-                  {user.badge || user.role}
-                </span>
+          {/* Brand */}
+          <div className="flex items-center gap-3">
+            {/* Mobile menu button */}
+            <button
+              className="lg:hidden p-1.5 text-emerald-300 hover:bg-emerald-900 rounded-md"
+              onClick={() => setMobileNavOpen(!mobileNavOpen)}
+            >
+              {mobileNavOpen ? <X size={18} /> : <Menu size={18} />}
+            </button>
+
+            <div className="flex items-center gap-2.5">
+              <div className="w-7 h-7 bg-green-600 rounded-md flex items-center justify-center text-white font-black text-sm">
+                D
               </div>
-              <span className="text-[10px] text-slate-400 leading-none">{user.email}</span>
+              <div>
+                <span className="text-base font-display font-bold text-emerald-50">DealFlow360</span>
+                <span className="hidden sm:inline ml-2 text-xs text-emerald-300/60">Enterprise</span>
+              </div>
             </div>
           </div>
 
-          {/* Database indicator */}
-          <div className="hidden xl:flex items-center gap-1.5 text-xs text-slate-400 bg-slate-800/40 px-2.5 py-1.5 rounded-lg border border-slate-700/50">
-            <Database size={13} className="text-emerald-400" />
-            <span className="font-mono text-[11px]">{dbStatus?.engine || 'PostgreSQL'}</span>
+          {/* Right side: user menu */}
+          <div className="flex items-center gap-2">
+            {/* Reset demo */}
+            <button
+              onClick={handleResetDemo}
+              title="Reset demo data"
+              className="p-2 text-emerald-300/60 hover:text-emerald-200 hover:bg-emerald-900 rounded-md transition-colors"
+            >
+              <RotateCcw size={15} />
+            </button>
+
+            {/* User menu */}
+            <div className="relative">
+              <button
+                onClick={() => setUserMenuOpen(!userMenuOpen)}
+                className="flex items-center gap-2 pl-2 pr-3 py-1.5 rounded-md hover:bg-emerald-900 transition-colors"
+              >
+                <img
+                  src={user.avatar}
+                  alt={user.name}
+                  className="w-7 h-7 rounded-full object-cover border border-emerald-600"
+                />
+                <div className="hidden sm:block text-left">
+                  <div className="text-sm font-semibold text-emerald-50 leading-none">{user.name}</div>
+                  <div className={`text-[10px] font-medium px-1.5 py-0.5 rounded mt-0.5 inline-block ${ROLE_COLORS[user.role]}`}>
+                    {user.badge}
+                  </div>
+                </div>
+                <ChevronDown size={14} className="text-emerald-300/60 hidden sm:block" />
+              </button>
+
+              {/* Dropdown */}
+              {userMenuOpen && (
+                <div className="absolute right-0 top-full mt-1 w-64 bg-emerald-950 border border-emerald-700 rounded-lg shadow-lg shadow-emerald-950/50 z-50 overflow-hidden">
+                  {/* Current user */}
+                  <div className="px-4 py-3 border-b border-emerald-800 bg-emerald-900/60">
+                    <p className="text-xs font-semibold text-emerald-300/60 uppercase tracking-wider mb-2">Signed in as</p>
+                    <div className="flex items-center gap-2">
+                      <img src={user.avatar} alt={user.name} className="w-8 h-8 rounded-full border border-emerald-600" />
+                      <div>
+                        <p className="text-sm font-semibold text-emerald-50">{user.name}</p>
+                        <p className="text-xs text-emerald-300/60">{user.email}</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Switch persona */}
+                  <div className="px-4 py-2 border-b border-emerald-800">
+                    <p className="text-[11px] font-semibold text-emerald-300/60 uppercase tracking-wider mb-1.5">Switch Persona</p>
+                    {personas.map(p => (
+                      <button
+                        key={p.role}
+                        onClick={() => handleRoleSwitch(p)}
+                        className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-sm transition-colors text-left ${
+                          user.role === p.role ? 'bg-emerald-400/15 text-emerald-300' : 'text-emerald-100 hover:bg-emerald-900'
+                        }`}
+                      >
+                        <img src={p.avatar} alt={p.name} className="w-6 h-6 rounded-full border border-emerald-600" />
+                        <span className="font-medium">{p.name}</span>
+                        {user.role === p.role && (
+                          <span className="ml-auto text-green-600">
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                            </svg>
+                          </span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Logout */}
+                  <div className="p-2">
+                    <button
+                      onClick={logout}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-rose-300 hover:bg-rose-400/10 rounded-md transition-colors"
+                    >
+                      <LogOut size={14} />
+                      Sign out
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
-
-          {/* Reset Demo Button */}
-          <button 
-            onClick={handleResetDemo}
-            className="p-1.5 text-slate-400 hover:text-white bg-slate-800/40 hover:bg-slate-800 rounded-lg border border-slate-700/50 transition-colors"
-            title="Reset Scenario Demo Data"
-          >
-            <RotateCcw size={14} />
-          </button>
-
-          {/* Logout Button */}
-          <button
-            onClick={logout}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-rose-300 bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/50 rounded-xl transition-colors shadow-sm"
-            title="Sign out of DealFlow360"
-          >
-            <LogOut size={13} />
-            <span className="hidden sm:inline">Sign Out</span>
-          </button>
         </div>
+
+        {/* ── Navigation Tabs ─────────────────────────── */}
+        <div className="border-t border-emerald-900 bg-emerald-950/70 hidden lg:block">
+          <nav className="flex items-center px-4 md:px-6 overflow-x-auto">
+            {visibleNav.map(item => {
+              const Icon = item.icon;
+              const isActive = activeTab === item.id;
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => { setActiveTab(item.id); setMobileNavOpen(false); }}
+                  className={`nav-tab ${isActive ? 'active' : ''}`}
+                >
+                  <Icon size={15} />
+                  {item.label}
+                </button>
+              );
+            })}
+          </nav>
+        </div>
+
+        {/* ── Mobile Nav Drawer ───────────────────────── */}
+        {mobileNavOpen && (
+          <div className="lg:hidden border-t border-emerald-900 bg-emerald-950">
+            <nav className="flex flex-col py-1">
+              {visibleNav.map(item => {
+                const Icon = item.icon;
+                const isActive = activeTab === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => { setActiveTab(item.id); setMobileNavOpen(false); }}
+                    className={`flex items-center gap-3 px-4 py-2.5 text-sm font-medium transition-colors ${
+                      isActive
+                        ? 'text-green-700 bg-green-50'
+                        : 'text-emerald-300/70 hover:bg-emerald-900 hover:text-emerald-100'
+                    }`}
+                  >
+                    <Icon size={16} />
+                    {item.label}
+                  </button>
+                );
+              })}
+            </nav>
+          </div>
+        )}
       </header>
 
-      {/* 🎯 15-Step Judge Stepper Bar */}
-      <JudgeStepper 
-        currentStep={currentJudgeStep}
-        onSelectStep={activateStep}
-        onRunNextStep={handleNextStep}
-        isAutoPlaying={isAutoPlaying}
-        onToggleAutoPlay={() => setIsAutoPlaying(!isAutoPlaying)}
-      />
+      {/* Click outside to close dropdowns */}
+      {userMenuOpen && (
+        <div className="fixed inset-0 z-30" onClick={() => setUserMenuOpen(false)} />
+      )}
 
-      {/* Navigation Sub-Tabs */}
-      <div className="bg-slate-900/60 border-b border-slate-800/60 px-4 md:px-6 py-2 overflow-x-auto flex items-center gap-2">
-        <button 
-          onClick={() => { setActiveTab('admin'); setCurrentJudgeStep(1); }}
-          className={`tab-btn ${activeTab === 'admin' ? 'active' : ''}`}
-        >
-          <Settings size={15} /> Admin Configuration
-        </button>
-        <button 
-          onClick={() => { setActiveTab('sales'); setCurrentJudgeStep(3); }}
-          className={`tab-btn ${activeTab === 'sales' ? 'active' : ''}`}
-        >
-          <ShoppingCart size={15} /> Sales CPQ Studio
-        </button>
-        <button 
-          onClick={() => { setActiveTab('manager'); setCurrentJudgeStep(6); }}
-          className={`tab-btn ${activeTab === 'manager' ? 'active' : ''}`}
-        >
-          <ShieldCheck size={15} /> Manager Approval Queue
-        </button>
-        <button 
-          onClick={() => { setActiveTab('operations'); setCurrentJudgeStep(8); }}
-          className={`tab-btn ${activeTab === 'operations' ? 'active' : ''}`}
-        >
-          <Warehouse size={15} /> Warehouse & Split Stock
-        </button>
-        <button 
-          onClick={() => { setActiveTab('customer'); setCurrentJudgeStep(10); }}
-          className={`tab-btn ${activeTab === 'customer' ? 'active' : ''}`}
-        >
-          <UserCheck size={15} /> Customer Deal Room
-        </button>
-        <button 
-          onClick={() => { setActiveTab('billing'); setCurrentJudgeStep(9); }}
-          className={`tab-btn ${activeTab === 'billing' ? 'active' : ''}`}
-        >
-          <Receipt size={15} /> Hybrid Billing & Invoicing
-        </button>
-        <button 
-          onClick={() => { setActiveTab('dashboard'); setCurrentJudgeStep(15); }}
-          className={`tab-btn ${activeTab === 'dashboard' ? 'active' : ''}`}
-        >
-          <BarChart3 size={15} /> Deal Health Dashboard
-        </button>
-      </div>
+      {/* ── Page Content ───────────────────────────────── */}
+      <main className="flex-1 p-4 md:p-6 max-w-screen-xl mx-auto w-full">
 
-      {/* Main View Workspace Area */}
-      <main className="flex-1 p-4 md:p-6 max-w-[1440px] mx-auto w-full">
         {activeTab === 'admin' && (
-          <AdminView onRulesUpdated={() => activateStep(3)} />
+          <AdminView onRulesUpdated={() => setActiveTab('sales')} />
         )}
 
         {activeTab === 'sales' && (
-          <SalesRepCPQView 
-            prefillExcessiveDiscount={prefillExcessive}
+          <SalesRepCPQView
+            prefillExcessiveDiscount={false}
             onQuoteCreated={(quote) => {
               setActiveQuoteId(quote.id);
-              if (quote.status === 'PENDING_APPROVAL' || quote.approval_status === 'PENDING_APPROVAL' || quote.approval_status === 'PENDING_MANAGER') {
-                activateStep(6); // Route to manager
-              } else {
-                activateStep(8); // Direct to warehouse
-              }
+              const needsApproval =
+                quote.status === 'PENDING_APPROVAL' ||
+                quote.approval_status === 'PENDING_APPROVAL' ||
+                quote.approval_status === 'PENDING_MANAGER';
+              setActiveTab(needsApproval ? 'manager' : 'operations');
             }}
           />
         )}
 
         {activeTab === 'manager' && (
-          <ApprovalInboxView 
+          <ApprovalInboxView
             onApproved={(quote) => {
               setActiveQuoteId(quote.id);
-              if (currentJudgeStep >= 10) {
-                activateStep(13); // Customer confirms
-              } else {
-                activateStep(7); // Upsell offer
-              }
+              setActiveTab('operations');
             }}
           />
         )}
@@ -346,22 +289,28 @@ function DealFlowApp() {
         )}
 
         {activeTab === 'customer' && (
-          <CustomerPortalView 
+          <CustomerPortalView
             quoteId={activeQuoteId}
-            onCounterOfferSubmitted={() => activateStep(11)}
-            onQuoteConfirmed={() => activateStep(14)}
+            onCounterOfferSubmitted={() => setActiveTab('manager')}
+            onQuoteConfirmed={() => setActiveTab('billing')}
           />
         )}
 
         {activeTab === 'billing' && (
-          <BillingCheckoutView 
+          <BillingCheckoutView
             quoteId={activeQuoteId}
-            onPaymentCompleted={() => activateStep(15)}
+            onPaymentCompleted={() => setActiveTab('dashboard')}
           />
         )}
 
-        {activeTab === 'dashboard' && (
-          <DashboardView />
+        {activeTab === 'dashboard' && <DashboardView />}
+
+        {(activeTab === 'invoices' || activeTab === 'health' || activeTab === 'reports') && (
+          <div className="card">
+            <div className="card-body py-16 text-center text-emerald-300/60">
+              <p className="text-sm">This section is coming soon.</p>
+            </div>
+          </div>
         )}
       </main>
     </div>

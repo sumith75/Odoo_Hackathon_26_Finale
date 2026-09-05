@@ -75,18 +75,15 @@ Customer ➔ Sales Rep ➔ Quotation ➔ Quotation Items ➔ Pricing ➔ Discoun
 ## 6. PROJECT DIRECTORY STRUCTURE
 ```
 dealflow360/
-├── backend/
-│   ├── src/
-│   │   ├── config/      (PostgreSQL & in-memory fallback store)
-│   │   ├── db/          (SQL Schema & Seed data)
+├── backend/                    # Express.js REST API + Prisma ORM
+│   ├── database/               # PostgreSQL schema & seeds (DDL)
+│   ├── prisma/                 # Prisma schema & seed scripts
+│   ├── src/                    # Source code
 │   │   ├── routes/      (Admin, Auth, Quotes, Approvals, Customer, Execution, Dashboard)
 │   │   ├── services/    (Pricing, Risk, Upsell, Inventory, Billing Engines)
 │   │   └── server.js    (Express server on port 5000)
 │   ├── tests/           (test-flow.js 13-step automated test suite)
 │   └── package.json
-├── database/
-│   ├── schema.sql       (PostgreSQL DDL schema)
-│   └── seed.sql         (Master seed data)
 ├── frontend/
 │   ├── src/
 │   │   ├── components/  (Admin, CPQ Studio, Approvals, Deal Room, Warehouses, Billing, Dashboard, Stepper)

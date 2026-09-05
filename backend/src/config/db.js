@@ -41,20 +41,16 @@ export async function initDb() {
   try {
     pool = new pg.Pool({
       connectionString,
-      connectionTimeoutMillis: 2500
+      connectionTimeoutMillis: 10000,
+      ssl: connectionString.includes('sslmode=require') ? { rejectUnauthorized: false } : undefined
     });
 
     const client = await pool.connect();
     console.log('✅ [DATABASE] Successfully connected to PostgreSQL at:', connectionString.replace(/:[^:@]+@/, ':****@'));
     isPostgresConnected = true;
 
-    // Run schema.sql
-    const schemaPath = path.join(__dirname, '../db/schema.sql');
-    if (fs.existsSync(schemaPath)) {
-      const schemaSql = fs.readFileSync(schemaPath, 'utf8');
-      await client.query(schemaSql);
-      console.log('✅ [DATABASE] PostgreSQL schema tables initialized.');
-    }
+    // Schema is managed by Prisma ORM (prisma/schema.prisma)
+    console.log('✅ [DATABASE] PostgreSQL active via Neon & Prisma.');
 
     // Seed products if empty
     const { rows: prodRows } = await client.query('SELECT COUNT(*) as count FROM products');

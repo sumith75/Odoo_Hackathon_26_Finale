@@ -47,8 +47,12 @@ app.use((req, res, next) => {
   next();
 });
 
+// Reflecting any origin (the old `|| true` fallback) while allowing
+// credentials is a real CORS weak point once CLIENT_URL isn't set. Default to
+// the known local dev origins instead of wildcarding to "anything".
+const DEFAULT_DEV_ORIGINS = ['http://localhost:5173', 'http://127.0.0.1:5173'];
 const corsOptions = {
-  origin: process.env.CLIENT_URL || true,
+  origin: process.env.CLIENT_URL || DEFAULT_DEV_ORIGINS,
   credentials: true,
 };
 app.use(cors(corsOptions));

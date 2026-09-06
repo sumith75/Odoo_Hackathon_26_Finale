@@ -86,6 +86,7 @@ model Organization {
   approvalRules ApprovalRule[]
   auditLogs     AuditLog[]
   customers     Customer[]
+  productUpsells ProductUpsell[]
   quotations    Quotation[]
   approvals     Approval[]
   warehouses    Warehouse[]
@@ -195,12 +196,42 @@ model Product {
   subscriptions        Subscription[]
   invoiceItems         InvoiceItem[]
   variants             ProductVariant[]
+  upsellsAsSource      ProductUpsell[]       @relation("UpsellSource")
+  upsellsAsTarget      ProductUpsell[]       @relation("UpsellTarget")
 
   @@unique([tenantId, sku])
   @@index([tenantId])
   @@index([tenantId, type])
   @@index([tenantId, isActive])
   @@map("products")
+}
+
+// ============================================================
+// PRODUCT-SPECIFIC UPSELL / CROSS-SELL MAPPINGS
+//
+// Admin-curated "when Product X is on the quote, recommend Product Y"
+// pairs — distinct from the generic category-based heuristics in
+// recommendationService.js. Consulted first by the recommendation engine;
+// the category heuristics only fill in gaps this table doesn't cover.
+// ============================================================
+
+model ProductUpsell {
+  id                   String   @id @default(uuid())
+  tenantId             String   @map("tenant_id")
+  productId            String   @map("product_id")
+  recommendedProductId String   @map("recommended_product_id")
+  reason               String?
+  priority             Int      @default(1)
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @default(now()) @updatedAt @map("updated_at")
+
+  tenant             Organization @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  product            Product      @relation("UpsellSource", fields: [productId], references: [id], onDelete: Cascade)
+  recommendedProduct Product      @relation("UpsellTarget", fields: [recommendedProductId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, recommendedProductId])
+  @@index([tenantId, productId])
+  @@map("product_upsells")
 }
 
 // ============================================================

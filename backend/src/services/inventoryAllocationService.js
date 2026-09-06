@@ -357,6 +357,17 @@ export async function getBackorderStatus(tenantId, quotationId) {
   const physicalItems = quote.items.filter(
     (item) => item.productTypeSnapshot === 'HARDWARE' || item.product?.isInventoryTracked
   );
+
+  // A line with zero allocations so far hasn't been backordered — it simply
+  // hasn't been through allocation yet (that's what "Trigger Auto-Allocation"
+  // is for). Only a line that already has at least one allocation attempt on
+  // record, and still falls short of the required quantity, is a genuine
+  // backorder eligible for consolidation.
+  const hasAnyAllocationAttempt = quote.warehouseAllocations.length > 0;
+  if (!hasAnyAllocationAttempt) {
+    return { hasBackorder: false, canConsolidateAny: false, items: [] };
+  }
+
   const productIds = physicalItems.map((item) => item.productId);
 
   const inventories = productIds.length

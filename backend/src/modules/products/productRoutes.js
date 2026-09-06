@@ -824,4 +824,128 @@ router.delete('/:id/variants/:variantId', requireAdmin, async (req, res) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// PRODUCT-SPECIFIC UPSELL / CROSS-SELL MAPPINGS
+// Admin-curated "when this product is quoted, recommend these products" pairs.
+// Consulted by recommendationService.js ahead of the generic category rules.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// GET /api/products/:id/upsells
+router.get('/:id/upsells', async (req, res) => {
+  try {
+    const product = await prisma.product.findFirst({
+      where: { id: req.params.id, tenantId: req.tenantId },
+    });
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        error: { code: 'PRODUCT_NOT_FOUND', message: 'Product not found.' },
+      });
+    }
+
+    const upsells = await prisma.productUpsell.findMany({
+      where: { productId: product.id, tenantId: req.tenantId },
+      include: {
+        recommendedProduct: {
+          select: { id: true, name: true, sku: true, type: true, unitPrice: true, currency: true, isActive: true },
+        },
+      },
+      orderBy: { priority: 'asc' },
+    });
+
+    res.json({ success: true, data: upsells });
+  } catch (err) {
+    console.error('[PRODUCTS] Upsells fetch error:', err);
+    res.status(500).json({
+      success: false,
+      error: { code: 'INTERNAL_ERROR', message: 'Failed to fetch upsell mappings.' },
+    });
+  }
+});
+
+// PUT /api/products/:id/upsells
+// Replaces the full set of product-specific recommendations for this product.
+// Body: { recommendations: [{ recommendedProductId, reason? }, ...] }
+router.put('/:id/upsells', requireAdmin, async (req, res) => {
+  try {
+    const { recommendations } = req.body;
+    if (!Array.isArray(recommendations)) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'VALIDATION_ERROR', message: 'recommendations must be an array.' },
+      });
+    }
+
+    const product = await prisma.product.findFirst({
+      where: { id: req.params.id, tenantId: req.tenantId },
+    });
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        error: { code: 'PRODUCT_NOT_FOUND', message: 'Product not found.' },
+      });
+    }
+
+    const recommendedIds = [
+      ...new Set(recommendations.map((r) => r.recommendedProductId).filter(Boolean)),
+    ].filter((id) => id !== product.id);
+
+    if (recommendedIds.length > 0) {
+      const validCount = await prisma.product.count({
+        where: { id: { in: recommendedIds }, tenantId: req.tenantId },
+      });
+      if (validCount !== recommendedIds.length) {
+        return res.status(400).json({
+          success: false,
+          error: { code: 'INVALID_PRODUCT', message: 'One or more recommended products do not belong to your organization.' },
+        });
+      }
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.productUpsell.deleteMany({ where: { productId: product.id, tenantId: req.tenantId } });
+      if (recommendedIds.length > 0) {
+        await tx.productUpsell.createMany({
+          data: recommendations
+            .filter((r) => recommendedIds.includes(r.recommendedProductId))
+            .map((r, idx) => ({
+              tenantId: req.tenantId,
+              productId: product.id,
+              recommendedProductId: r.recommendedProductId,
+              reason: r.reason?.trim() || `Frequently paired with ${product.name}.`,
+              priority: idx + 1,
+            })),
+        });
+      }
+    });
+
+    await logAudit({
+      tenantId: req.tenantId,
+      userId: req.user.id,
+      action: 'PRODUCT_UPSELLS_UPDATED',
+      entityType: 'PRODUCT',
+      entityId: product.id,
+      metadata: { productName: product.name, recommendedCount: recommendedIds.length },
+    });
+
+    const updated = await prisma.productUpsell.findMany({
+      where: { productId: product.id, tenantId: req.tenantId },
+      include: {
+        recommendedProduct: {
+          select: { id: true, name: true, sku: true, type: true, unitPrice: true, currency: true, isActive: true },
+        },
+      },
+      orderBy: { priority: 'asc' },
+    });
+
+    res.json({ success: true, data: updated });
+  } catch (err) {
+    console.error('[PRODUCTS] Upsells update error:', err);
+    res.status(500).json({
+      success: false,
+      error: { code: 'INTERNAL_ERROR', message: 'Failed to save upsell mappings.' },
+    });
+  }
+});
+
 export default router;

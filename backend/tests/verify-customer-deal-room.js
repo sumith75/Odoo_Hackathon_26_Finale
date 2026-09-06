@@ -72,16 +72,24 @@ async function runCustomerVerification() {
     });
     const repHeaders = { Authorization: `Bearer ${repLogin.data?.token}` };
 
-    // Fetch rep's quotes
-    const repQuotesRes = await req(`${BASE_URL}/quotations/my`, { headers: repHeaders });
+    // Fetch rep's quotes for Acme specifically (search + a high limit) rather
+    // than relying on default pagination/sort order — this suite runs against
+    // a shared, ever-growing dev database, and other suites deliberately leave
+    // behind malformed/edge-case fixture quotes (e.g. "DF360-STALE-*" expired
+    // fixtures with no line items), so both robustness measures matter.
+    const repQuotesRes = await req(`${BASE_URL}/quotations/my?search=Acme&limit=100`, { headers: repHeaders });
+    const isUsableQuote = (q) =>
+      q.customer?.name === 'Acme Corporation' &&
+      !String(q.quoteNumber || '').includes('STALE') &&
+      Number(q.totalAmount) > 0;
     let activeQuote = repQuotesRes.data?.data?.find(
-      (q) => q.customer?.name === 'Acme Corporation' && (q.status === 'SENT_TO_CUSTOMER' || q.status === 'APPROVED')
+      (q) => isUsableQuote(q) && (q.status === 'SENT_TO_CUSTOMER' || q.status === 'APPROVED')
     );
 
     if (!activeQuote) {
       // Find or create quote for Acme
       const draftQuote = repQuotesRes.data?.data?.find(
-        (q) => q.customer?.name === 'Acme Corporation'
+        (q) => isUsableQuote(q)
       );
       if (draftQuote) {
         // Send to customer
@@ -92,11 +100,14 @@ async function runCustomerVerification() {
         });
         activeQuote = sendRes.data?.data;
       } else {
-        // Create one
-        const custRes = await req(`${BASE_URL}/customers`, { headers: repHeaders });
+        // Create one — search explicitly rather than trusting default
+        // pagination to surface the seeded Acme customer / laptop product.
+        const custRes = await req(`${BASE_URL}/customers?search=${encodeURIComponent('customer@acme.com')}`, { headers: repHeaders });
         const acmeCustomer = custRes.data?.data?.find((c) => c.email === 'customer@acme.com');
-        const prodRes = await req(`${BASE_URL}/products`, { headers: repHeaders });
+        if (!acmeCustomer) throw new Error('Could not locate seeded customer@acme.com to build a test quote');
+        const prodRes = await req(`${BASE_URL}/products?search=${encodeURIComponent('HW-LAP-001')}&limit=100`, { headers: repHeaders });
         const laptop = prodRes.data?.data?.find((p) => p.sku === 'HW-LAP-001') || prodRes.data?.data?.[0];
+        if (!laptop) throw new Error('Could not locate a product to build a test quote');
 
         const createRes = await req(`${BASE_URL}/quotations`, {
           method: 'POST',
@@ -158,15 +169,26 @@ async function runCustomerVerification() {
 
     // 6. IDOR Security Verification
     console.log('\n6️⃣ Verifying IDOR Prevention (Customer A cannot access Customer B quotes)...');
-    const custBEmail = `buyer-test-${Date.now()}@beta.com`;
-    const regB = await req(`${BASE_URL}/auth/register-customer`, {
+    // Customer B is created by an Admin — customer self-signup no longer exists.
+    const adminLoginForB = await req(`${BASE_URL}/auth/login`, {
       method: 'POST',
+      body: JSON.stringify({ email: 'admin@techworld.com', password: 'Admin@123' }),
+    });
+    const adminHeadersForB = { Authorization: `Bearer ${adminLoginForB.data?.token}` };
+    const custBEmail = `buyer-test-${Date.now()}@beta.com`;
+    await req(`${BASE_URL}/customers`, {
+      method: 'POST',
+      headers: adminHeadersForB,
       body: JSON.stringify({
         name: 'Beta Buyer',
         email: custBEmail,
         password: 'Password@123',
         companyName: 'Beta Industries',
       }),
+    });
+    const regB = await req(`${BASE_URL}/auth/login`, {
+      method: 'POST',
+      body: JSON.stringify({ email: custBEmail, password: 'Password@123' }),
     });
     const customerBToken = regB.data?.token;
     const customerBHeaders = { Authorization: `Bearer ${customerBToken}` };
@@ -245,7 +267,7 @@ async function runCustomerVerification() {
     });
     const managerHeaders = { Authorization: `Bearer ${managerLogin.data?.token}` };
 
-    const managerApprovals = await req(`${BASE_URL}/manager/approvals`, { headers: managerHeaders });
+    const managerApprovals = await req(`${BASE_URL}/manager/approvals?search=${encodeURIComponent(activeQuote.quoteNumber)}`, { headers: managerHeaders });
     const pendingInManager = managerApprovals.data?.data?.find((q) => q.id === activeQuote.id);
     assert(pendingInManager !== undefined, 'Quote is present in Sales Manager Approval Inbox awaiting decision');
 

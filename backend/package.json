@@ -12,6 +12,8 @@
     "test:health": "node tests/verify-module9-deal-health-analytics.js",
     "test:payment": "node tests/verify-module14-payment-billing.js",
     "test:reports": "node tests/verify-module15-reporting-documents.js",
+    "test:customers": "node tests/verify-customer-account-creation.js",
+    "test:deal-room": "node tests/verify-customer-deal-room.js && node tests/verify-customer-deal-room-comprehensive.js",
     "test:all": "node tests/verify-foundation.js && node tests/verify-module9-deal-health-analytics.js && node tests/verify-module10-notifications-audit.js && node tests/verify-module11-e2e-deal-lifecycle.js && node tests/verify-module12-security-hardening.js && node tests/verify-module14-payment-billing.js && node tests/verify-module15-reporting-documents.js",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",

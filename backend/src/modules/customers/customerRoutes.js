@@ -1,4 +1,5 @@
 import express from 'express';
+import bcrypt from 'bcryptjs';
 import prisma from '../../db/prisma.js';
 import { authenticateUser } from '../../middleware/auth.js';
 import { resolveTenant } from '../../middleware/tenant.js';
@@ -123,19 +124,35 @@ router.get('/:id', async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 router.post('/', async (req, res) => {
   try {
-    const { name, companyName, email, tier = 'BRONZE', currency = 'INR' } = req.body;
+    const { name, companyName, email, password, tier = 'BRONZE', currency = 'INR' } = req.body;
 
-    if (!name || !email) {
+    if (!name || !email || !password) {
       return res.status(400).json({
         success: false,
-        error: { code: 'VALIDATION_ERROR', message: 'Customer name and email are required.' },
+        error: { code: 'VALIDATION_ERROR', message: 'Customer name, email, and password are required.' },
       });
     }
 
+    if (password.length < 6) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'VALIDATION_ERROR', message: 'Password must be at least 6 characters long.' },
+      });
+    }
+
+    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     const cleanEmail = email.trim().toLowerCase();
+    if (!emailPattern.test(cleanEmail)) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'VALIDATION_ERROR', message: 'A valid email address is required.' },
+      });
+    }
+
     const validTier = ['BRONZE', 'SILVER', 'GOLD'].includes(tier) ? tier : 'BRONZE';
 
-    // Check duplicate within tenant
+    // Check duplicate within tenant — the organization is always derived from
+    // the authenticated user's own tenant, never from client input.
     const existing = await prisma.customer.findFirst({
       where: {
         tenantId: req.tenantId,
@@ -146,9 +163,11 @@ router.post('/', async (req, res) => {
     if (existing) {
       return res.status(409).json({
         success: false,
-        error: { code: 'DUPLICATE_EMAIL', message: 'A customer with this email already exists.' },
+        error: { code: 'DUPLICATE_EMAIL', message: 'A customer with this email already exists in your organization.' },
       });
     }
+
+    const passwordHash = await bcrypt.hash(password, 10);
 
     const customer = await prisma.customer.create({
       data: {
@@ -156,13 +175,24 @@ router.post('/', async (req, res) => {
         name: name.trim(),
         companyName: companyName ? companyName.trim() : name.trim(),
         email: cleanEmail,
+        passwordHash,
         tier: validTier,
         currency: currency || 'INR',
         status: 'ACTIVE',
       },
+      select: {
+        id: true,
+        name: true,
+        companyName: true,
+        email: true,
+        tier: true,
+        currency: true,
+        status: true,
+        createdAt: true,
+      },
     });
 
-    // Audit log
+    // Audit log — never record the password itself
     await logAudit({
       tenantId: req.tenantId,
       userId: req.user?.id,
@@ -221,6 +251,16 @@ router.patch('/:id/tier', async (req, res) => {
         id: req.params.id,
         tenantId: req.tenantId,
       },
+      select: {
+        id: true,
+        name: true,
+        companyName: true,
+        email: true,
+        tier: true,
+        currency: true,
+        status: true,
+        createdAt: true,
+      },
     });
 
     if (!customer) {
@@ -243,6 +283,16 @@ router.patch('/:id/tier', async (req, res) => {
     const updatedCustomer = await prisma.customer.update({
       where: { id: customer.id },
       data: { tier },
+      select: {
+        id: true,
+        name: true,
+        companyName: true,
+        email: true,
+        tier: true,
+        currency: true,
+        status: true,
+        createdAt: true,
+      },
     });
 
     // Append-only AuditLog entry
@@ -321,6 +371,16 @@ router.put('/:id', async (req, res) => {
     const updated = await prisma.customer.update({
       where: { id: customer.id },
       data: updateData,
+      select: {
+        id: true,
+        name: true,
+        companyName: true,
+        email: true,
+        tier: true,
+        currency: true,
+        status: true,
+        createdAt: true,
+      },
     });
 
     if (tierChanged) {

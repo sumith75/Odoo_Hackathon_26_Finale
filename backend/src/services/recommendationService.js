@@ -1,7 +1,13 @@
 /**
  * recommendationService.js — Cross-sell and Upsell Intelligence Engine
  *
- * Rules-based recommendations for CPQ Studio.
+ * Rules-based recommendations for CPQ Studio, in two layers:
+ *   1. Product-specific: Admin-curated ProductUpsell mappings keyed to the
+ *      exact product(s) already on the quote (managed from Admin Product
+ *      Catalog -> "Upsells"). These are the highest-priority suggestions.
+ *   2. Category heuristics: generic hardware/service/subscription rules that
+ *      fill in when a product on the quote has no explicit mapping.
+ *
  * Strictly guarantees tenant isolation and only suggests active, unadded products.
  */
 
@@ -17,6 +23,46 @@ export async function getQuoteRecommendations(tenantId, currentItems = []) {
     currentItems.map((i) => i.productId || i.id).filter(Boolean)
   );
 
+  const recommendations = [];
+
+  // ── Layer 1: Product-specific admin-curated mappings ──────────────────────
+  const currentProductIds = [...existingProductIds];
+  if (currentProductIds.length > 0) {
+    const productUpsells = await prisma.productUpsell.findMany({
+      where: { tenantId, productId: { in: currentProductIds } },
+      include: { recommendedProduct: true },
+      orderBy: { priority: 'asc' },
+    });
+
+    for (const upsell of productUpsells) {
+      const rp = upsell.recommendedProduct;
+      if (!rp || !rp.isActive || existingProductIds.has(rp.id)) continue;
+
+      recommendations.push({
+        productId: rp.id,
+        name: rp.name,
+        sku: rp.sku,
+        type: rp.type,
+        unitPrice: parseFloat(rp.unitPrice),
+        currency: rp.currency,
+        billingType: rp.billingType,
+        billingInterval: rp.billingInterval,
+        reason: upsell.reason,
+        priority: 0, // product-specific suggestions always outrank category heuristics
+        source: 'PRODUCT_SPECIFIC',
+      });
+      existingProductIds.add(rp.id);
+    }
+  }
+
+  return recommendations.concat(
+    getCategoryHeuristicRecommendations(activeProducts, currentItems, existingProductIds)
+  ).sort((a, b) => a.priority - b.priority);
+}
+
+function getCategoryHeuristicRecommendations(activeProducts, currentItems, existingProductIds) {
+  const recommendations = [];
+
   const hasHardware = currentItems.some(
     (i) => (i.productTypeSnapshot || i.type) === 'HARDWARE'
   );
@@ -29,8 +75,6 @@ export async function getQuoteRecommendations(tenantId, currentItems = []) {
   const hasLaptop = currentItems.some((i) =>
     (i.productNameSnapshot || i.name || '').toLowerCase().includes('laptop')
   );
-
-  const recommendations = [];
 
   // Helper to add suggestion if product exists in tenant catalog and is not already in quote
   const suggest = (skuMatch, reason, priority = 1) => {

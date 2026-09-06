@@ -68,10 +68,19 @@ async function runComprehensiveVerification() {
     const mgrToken = mgrLogin.data?.token;
     const mgrHeaders = { Authorization: `Bearer ${mgrToken}` };
 
-    // Customer Beta (for IDOR tests)
-    const betaEmail = `buyer-beta-${Date.now()}@beta.com`;
-    const betaReg = await req(`${BASE_URL}/auth/register-customer`, {
+    // Admin (creates the Beta Buyer customer account — customer self-signup
+    // no longer exists; only an Admin can create a customer account)
+    const adminLogin = await req(`${BASE_URL}/auth/login`, {
       method: 'POST',
+      body: JSON.stringify({ email: 'admin@techworld.com', password: 'Admin@123' }),
+    });
+    const adminHeaders = { Authorization: `Bearer ${adminLogin.data?.token}` };
+
+    // Customer Beta (for IDOR tests) — created by Admin, not self-registered
+    const betaEmail = `buyer-beta-${Date.now()}@beta.com`;
+    await req(`${BASE_URL}/customers`, {
+      method: 'POST',
+      headers: adminHeaders,
       body: JSON.stringify({
         name: 'Beta Buyer',
         email: betaEmail,
@@ -79,7 +88,11 @@ async function runComprehensiveVerification() {
         companyName: 'Beta Industries',
       }),
     });
-    const betaToken = betaReg.data?.token;
+    const betaLogin = await req(`${BASE_URL}/auth/login`, {
+      method: 'POST',
+      body: JSON.stringify({ email: betaEmail, password: 'Password@123' }),
+    });
+    const betaToken = betaLogin.data?.token;
     const betaHeaders = { Authorization: `Bearer ${betaToken}` };
 
     // Setup a clean quotation for Acme

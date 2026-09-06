@@ -232,4 +232,41 @@ router.patch('/:id/status', async (req, res) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// DELETE /api/discount-rules/:id
+// ─────────────────────────────────────────────────────────────────────────────
+router.delete('/:id', async (req, res) => {
+  try {
+    const rule = await prisma.discountRule.findFirst({
+      where: { id: req.params.id, tenantId: req.tenantId },
+    });
+
+    if (!rule) {
+      return res.status(404).json({
+        success: false,
+        error: { code: 'RULE_NOT_FOUND', message: 'Discount rule not found.' },
+      });
+    }
+
+    await prisma.discountRule.delete({ where: { id: rule.id } });
+
+    await logAudit({
+      tenantId: req.tenantId,
+      userId: req.user.id,
+      action: 'DISCOUNT_RULE_DELETED',
+      entityType: 'DISCOUNT_RULE',
+      entityId: rule.id,
+      metadata: { name: rule.name },
+    });
+
+    res.json({ success: true, data: { id: rule.id } });
+  } catch (err) {
+    console.error('[DISCOUNT_RULES] Delete error:', err);
+    res.status(500).json({
+      success: false,
+      error: { code: 'INTERNAL_ERROR', message: 'Failed to delete discount rule.' },
+    });
+  }
+});
+
 export default router;

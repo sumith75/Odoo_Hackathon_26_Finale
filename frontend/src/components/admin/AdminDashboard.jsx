@@ -188,7 +188,7 @@ export default function AdminDashboard({ onNavigate }) {
             </div>
           </div>
           <div className="mt-3">
-            <span className="text-3xl font-black text-slate-900">{rules?.discountRulesCount || 0}</span>
+            <span className="text-3xl font-black text-slate-900">{rules?.discountRules || 0}</span>
             <span className="text-xs text-slate-400 ml-1.5">rules active</span>
           </div>
           <div className="mt-2 text-xs text-slate-500">
@@ -208,7 +208,7 @@ export default function AdminDashboard({ onNavigate }) {
             </div>
           </div>
           <div className="mt-3">
-            <span className="text-3xl font-black text-slate-900">{rules?.approvalRulesCount || 0}</span>
+            <span className="text-3xl font-black text-slate-900">{rules?.approvalRules || 0}</span>
             <span className="text-xs text-slate-400 ml-1.5">thresholds</span>
           </div>
           <div className="mt-2 text-xs text-slate-500">

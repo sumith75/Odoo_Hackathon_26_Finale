@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   XCircle,
   Edit2,
+  Trash2,
   Shield,
   Briefcase,
   FileSpreadsheet,
@@ -111,6 +112,32 @@ export default function TeamManagement() {
     } finally {
       setStatusActionId(null);
       setTimeout(() => setFeedback({ type: '', text: '' }), 3000);
+    }
+  };
+
+  const handleDelete = async (member) => {
+    if (!window.confirm(`Delete team member "${member.name}" (${member.email})? This cannot be undone.`)) {
+      return;
+    }
+    try {
+      const res = await fetchWithAuth(`/api/team/${member.id}`, {
+        method: 'DELETE',
+      });
+      if (res.success) {
+        setMembers((prev) => prev.filter((m) => m.id !== member.id));
+        setFeedback({ type: 'success', text: `Deleted "${member.name}".` });
+      }
+    } catch (err) {
+      // The backend puts the useful message under error.error.message (e.g.
+      // "this member has quotes/history, deactivate instead") — fetchWithAuth
+      // only reads a top-level `message`, so pull the real one from err.data.
+      const detailedMessage = err.data?.error?.message;
+      setFeedback({
+        type: 'error',
+        text: detailedMessage || err.message || 'Failed to delete team member.',
+      });
+    } finally {
+      setTimeout(() => setFeedback({ type: '', text: '' }), 5000);
     }
   };
 
@@ -337,23 +364,32 @@ export default function TeamManagement() {
                       </td>
 
                       <td className="py-3.5 px-4 text-right">
-                        <button
-                          onClick={() => {
-                            setEditingMember({
-                              id: member.id,
-                              name: member.name,
-                              email: member.email,
-                              role: member.role,
-                              phone: member.phone || '',
-                              password: '',
-                            });
-                            setIsEditModalOpen(true);
-                          }}
-                          className="p-1.5 text-slate-500 hover:text-green-700 hover:bg-slate-100 rounded-md transition-colors"
-                          title="Edit member"
-                        >
-                          <Edit2 size={14} />
-                        </button>
+                        <div className="flex items-center justify-end gap-1">
+                          <button
+                            onClick={() => {
+                              setEditingMember({
+                                id: member.id,
+                                name: member.name,
+                                email: member.email,
+                                role: member.role,
+                                phone: member.phone || '',
+                                password: '',
+                              });
+                              setIsEditModalOpen(true);
+                            }}
+                            className="p-1.5 text-slate-500 hover:text-green-700 hover:bg-slate-100 rounded-md transition-colors"
+                            title="Edit member"
+                          >
+                            <Edit2 size={14} />
+                          </button>
+                          <button
+                            onClick={() => handleDelete(member)}
+                            className="p-1.5 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors"
+                            title="Delete member"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );

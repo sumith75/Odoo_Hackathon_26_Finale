@@ -234,4 +234,41 @@ router.patch('/:id/status', async (req, res) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// DELETE /api/approval-rules/:id
+// ─────────────────────────────────────────────────────────────────────────────
+router.delete('/:id', async (req, res) => {
+  try {
+    const rule = await prisma.approvalRule.findFirst({
+      where: { id: req.params.id, tenantId: req.tenantId },
+    });
+
+    if (!rule) {
+      return res.status(404).json({
+        success: false,
+        error: { code: 'RULE_NOT_FOUND', message: 'Approval rule not found.' },
+      });
+    }
+
+    await prisma.approvalRule.delete({ where: { id: rule.id } });
+
+    await logAudit({
+      tenantId: req.tenantId,
+      userId: req.user.id,
+      action: 'APPROVAL_RULE_DELETED',
+      entityType: 'APPROVAL_RULE',
+      entityId: rule.id,
+      metadata: { name: rule.name },
+    });
+
+    res.json({ success: true, data: { id: rule.id } });
+  } catch (err) {
+    console.error('[APPROVAL_RULES] Delete error:', err);
+    res.status(500).json({
+      success: false,
+      error: { code: 'INTERNAL_ERROR', message: 'Failed to delete approval rule.' },
+    });
+  }
+});
+
 export default router;

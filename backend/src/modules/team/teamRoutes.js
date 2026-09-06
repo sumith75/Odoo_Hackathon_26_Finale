@@ -349,4 +349,63 @@ router.patch('/:id/status', async (req, res) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// DELETE /api/team/:id
+// ─────────────────────────────────────────────────────────────────────────────
+router.delete('/:id', async (req, res) => {
+  try {
+    const member = await prisma.user.findFirst({
+      where: { id: req.params.id, tenantId: req.tenantId },
+    });
+
+    if (!member) {
+      return res.status(404).json({
+        success: false,
+        error: { code: 'MEMBER_NOT_FOUND', message: 'Team member not found in your organization.' },
+      });
+    }
+
+    // Safety: Admin cannot delete themselves
+    if (member.id === req.user.id) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'CANNOT_DELETE_SELF', message: 'Administrators cannot delete their own account.' },
+      });
+    }
+
+    await prisma.user.delete({ where: { id: member.id } });
+
+    await logAudit({
+      tenantId: req.tenantId,
+      userId: req.user.id,
+      action: 'TEAM_MEMBER_DELETED',
+      entityType: 'USER',
+      entityId: member.id,
+      metadata: { name: member.name, email: member.email, role: member.role },
+    });
+
+    console.log(`👤 [TEAM] Member deleted: ${member.name} <${member.email}>`);
+
+    res.json({ success: true, data: { id: member.id } });
+  } catch (err) {
+    // A user with any authored quotations or audit history is protected by a
+    // foreign key constraint — Prisma surfaces this as P2003. Rather than
+    // 500 on that, tell the admin to deactivate instead of delete.
+    if (err.code === 'P2003') {
+      return res.status(409).json({
+        success: false,
+        error: {
+          code: 'MEMBER_HAS_HISTORY',
+          message: 'This team member has existing quotations, approvals, or audit history and cannot be deleted. Deactivate their account instead to revoke access while preserving records.',
+        },
+      });
+    }
+    console.error('[TEAM] Delete error:', err);
+    res.status(500).json({
+      success: false,
+      error: { code: 'INTERNAL_ERROR', message: 'Failed to delete team member.' },
+    });
+  }
+});
+
 export default router;

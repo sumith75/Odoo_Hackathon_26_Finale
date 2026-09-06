@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   XCircle,
   Edit2,
+  Trash2,
   RefreshCw,
   X,
   Shield,
@@ -123,6 +124,25 @@ export default function ApprovalRulesView() {
       setFeedback({ type: 'error', text: err.message || 'Failed to create approval rule' });
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleDelete = async (rule) => {
+    if (!window.confirm(`Delete approval rule "${rule.name}"? This cannot be undone.`)) {
+      return;
+    }
+    try {
+      const res = await fetchWithAuth(`/api/approval-rules/${rule.id}`, {
+        method: 'DELETE',
+      });
+      if (res.success) {
+        setRules((prev) => prev.filter((r) => r.id !== rule.id));
+        setFeedback({ type: 'success', text: `Deleted "${rule.name}".` });
+      }
+    } catch (err) {
+      setFeedback({ type: 'error', text: err.message || 'Failed to delete approval rule' });
+    } finally {
+      setTimeout(() => setFeedback({ type: '', text: '' }), 3000);
     }
   };
 
@@ -277,16 +297,25 @@ export default function ApprovalRulesView() {
                       </td>
 
                       <td className="py-3.5 px-4 text-right">
-                        <button
-                          onClick={() => {
-                            setEditingRule({ ...r });
-                            setIsEditModalOpen(true);
-                          }}
-                          className="p-1.5 text-slate-500 hover:text-green-700 hover:bg-slate-100 rounded-md transition-colors"
-                          title="Edit rule"
-                        >
-                          <Edit2 size={14} />
-                        </button>
+                        <div className="flex items-center justify-end gap-1">
+                          <button
+                            onClick={() => {
+                              setEditingRule({ ...r });
+                              setIsEditModalOpen(true);
+                            }}
+                            className="p-1.5 text-slate-500 hover:text-green-700 hover:bg-slate-100 rounded-md transition-colors"
+                            title="Edit rule"
+                          >
+                            <Edit2 size={14} />
+                          </button>
+                          <button
+                            onClick={() => handleDelete(r)}
+                            className="p-1.5 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors"
+                            title="Delete rule"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
